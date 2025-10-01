@@ -29,6 +29,9 @@ export function parseAmount(text: string): number | null {
   // Normalize digits first
   let normalized = normalizeDigits(text);
 
+  // Remove Arabic number words that might appear before numbers (ألف=thousand, مليون=million)
+  normalized = normalized.replace(/\b(ألف|الف|مليون)\b/gi, '');
+
   // Remove currency symbols and common words
   normalized = normalized.replace(/[€$£¥₹]/g, '');
   normalized = normalized.replace(/\b(EGP|CVE|USD|EUR|GBP)\b/gi, '');
@@ -47,12 +50,19 @@ export function parseAmount(text: string): number | null {
   // Handle comma as decimal separator (European format)
   normalized = normalized.replace(/,/g, '.');
 
-  // Extract the first valid number pattern
-  const match = normalized.match(/-?\d+\.?\d*/);
-  if (!match) return null;
+  // Extract all valid numbers and return the largest one (often the total)
+  const matches = normalized.match(/-?\d+\.?\d*/g);
+  if (!matches || matches.length === 0) return null;
 
-  const parsed = parseFloat(match[0]);
-  return isNaN(parsed) ? null : parsed;
+  // Parse all numbers and find the largest one
+  const numbers = matches
+    .map(m => parseFloat(m))
+    .filter(n => !isNaN(n) && n > 0);
+  
+  if (numbers.length === 0) return null;
+
+  // Return the largest number found (usually the total amount)
+  return Math.max(...numbers);
 }
 
 /**
