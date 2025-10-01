@@ -29,19 +29,22 @@ export function parseAmount(text: string): number | null {
   // Normalize digits first (convert Arabic/Persian to Western)
   let normalized = normalizeDigits(text);
 
-  // Remove Arabic words like "الف" (thousand) which are just prefixes
-  // Also remove common Arabic text that might appear
-  normalized = normalized.replace(/\b(ألف|الف|مليون|جنيه|دولار|يورو)\b/gi, ' ');
-
-  // Remove currency symbols
-  normalized = normalized.replace(/[€$£¥₹]/g, ' ');
-  normalized = normalized.replace(/\b(EGP|CVE|USD|EUR|GBP)\b/gi, ' ');
+  // Remove ALL non-numeric content except digits, spaces, and decimal separators
+  // Remove Arabic text, currency symbols, and any letters
+  normalized = normalized.replace(/[^\d\s.,]/g, ' ');
 
   // Clean up whitespace
   normalized = normalized.replace(/\s+/g, ' ').trim();
 
+  // Try to find space-separated digit sequences that form a single number
+  // e.g., "50 300" or "7 600" should be treated as "50300" and "7600"
+  const spacePattern = /(\d+)\s+(\d{3})\b/g;
+  normalized = normalized.replace(spacePattern, '$1$2');
+
+  // Remove remaining spaces between digits
+  normalized = normalized.replace(/(\d)\s+(\d)/g, '$1$2');
+
   // Extract all sequences of digits (with optional decimal point)
-  // This regex finds numbers like: 50300, 7600, 27500, 380, 550, etc.
   const matches = normalized.match(/\d+\.?\d*/g);
   if (!matches || matches.length === 0) return null;
 
@@ -55,7 +58,7 @@ export function parseAmount(text: string): number | null {
   // Return the largest number (in receipts, the total is usually the largest)
   const maxNumber = Math.max(...numbers);
   
-  console.log(`parseAmount("${text.substring(0, 50)}...") -> numbers found: [${numbers.join(', ')}], max: ${maxNumber}`);
+  console.log(`parseAmount("${text.substring(0, 60)}...") -> found: [${numbers.join(', ')}] -> max: ${maxNumber}`);
   
   return maxNumber;
 }
