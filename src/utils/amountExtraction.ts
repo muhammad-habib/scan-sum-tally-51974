@@ -10,9 +10,9 @@ interface ExtractedAmount {
 
 // Keywords that indicate a total amount (Arabic and other languages)
 const TOTAL_KEYWORDS = [
-  // Arabic
-  'الإجمالي', 'المجموع', 'الكلي', 'المبلغ الإجمالي', 'المبلغ الكلي',
-  'اجمالي', 'مجموع', 'كلي',
+  // Arabic - various forms
+  'الإجمالي', 'الاجمالي', 'المجموع', 'الكلي', 'المبلغ الإجمالي', 'المبلغ الكلي',
+  'اجمالي', 'إجمالي', 'مجموع', 'كلي', 'الإجمالى', 'الاجمالى',
   // English
   'total', 'total due', 'grand total', 'amount due', 'balance due',
   'sum', 'subtotal',
@@ -92,9 +92,9 @@ export function extractAmount(ocrText: string): ExtractedAmount {
     // Detect currency
     const currency = detectCurrency(line);
 
-    // Calculate confidence
+    // Calculate confidence - prioritize total keywords heavily
     const isLastInList = index >= lines.length - 5; // Within last 5 lines
-    const contextQuality = hasTotalKeyword ? 1.0 : 0.5;
+    const contextQuality = hasTotalKeyword ? 1.0 : 0.3;
     const confidence = calculateConfidence(
       hasTotalKeyword,
       isLastInList,
@@ -102,8 +102,13 @@ export function extractAmount(ocrText: string): ExtractedAmount {
       contextQuality
     );
 
-    // Update best candidate if this is better
-    if (!bestCandidate || confidence > bestCandidate.confidence) {
+    // Log for debugging
+    console.log(`Line ${index}: "${line.substring(0, 50)}..." -> amount: ${amount}, hasTotal: ${hasTotalKeyword}, confidence: ${confidence.toFixed(2)}`);
+
+    // Update best candidate - strongly prefer lines with total keywords
+    if (!bestCandidate || 
+        (hasTotalKeyword && !bestCandidate.line.toLowerCase().match(new RegExp(TOTAL_KEYWORDS.join('|'), 'i'))) ||
+        (hasTotalKeyword === (bestCandidate.line.toLowerCase().match(new RegExp(TOTAL_KEYWORDS.join('|'), 'i')) !== null) && confidence > bestCandidate.confidence)) {
       bestCandidate = {
         amount,
         currency,

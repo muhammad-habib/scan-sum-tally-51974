@@ -26,43 +26,38 @@ export function normalizeDigits(text: string): string {
 export function parseAmount(text: string): number | null {
   if (!text) return null;
 
-  // Normalize digits first
+  // Normalize digits first (convert Arabic/Persian to Western)
   let normalized = normalizeDigits(text);
 
-  // Remove Arabic number words that might appear before numbers (ألف=thousand, مليون=million)
-  normalized = normalized.replace(/\b(ألف|الف|مليون)\b/gi, '');
+  // Remove Arabic words like "الف" (thousand) which are just prefixes
+  // Also remove common Arabic text that might appear
+  normalized = normalized.replace(/\b(ألف|الف|مليون|جنيه|دولار|يورو)\b/gi, ' ');
 
-  // Remove currency symbols and common words
-  normalized = normalized.replace(/[€$£¥₹]/g, '');
-  normalized = normalized.replace(/\b(EGP|CVE|USD|EUR|GBP)\b/gi, '');
+  // Remove currency symbols
+  normalized = normalized.replace(/[€$£¥₹]/g, ' ');
+  normalized = normalized.replace(/\b(EGP|CVE|USD|EUR|GBP)\b/gi, ' ');
 
-  // Remove thousands separators (spaces, commas in thousands position)
-  // But preserve decimal commas/points
-  normalized = normalized.replace(/[\s,']/g, (match, offset, string) => {
-    // If it's a comma or point near the end (last 3 chars), keep it as decimal
-    const remainingLength = string.length - offset;
-    if ((match === ',' || match === '.') && remainingLength <= 3) {
-      return '.';
-    }
-    return '';
-  });
+  // Clean up whitespace
+  normalized = normalized.replace(/\s+/g, ' ').trim();
 
-  // Handle comma as decimal separator (European format)
-  normalized = normalized.replace(/,/g, '.');
-
-  // Extract all valid numbers and return the largest one (often the total)
-  const matches = normalized.match(/-?\d+\.?\d*/g);
+  // Extract all sequences of digits (with optional decimal point)
+  // This regex finds numbers like: 50300, 7600, 27500, 380, 550, etc.
+  const matches = normalized.match(/\d+\.?\d*/g);
   if (!matches || matches.length === 0) return null;
 
-  // Parse all numbers and find the largest one
+  // Parse all numbers
   const numbers = matches
     .map(m => parseFloat(m))
     .filter(n => !isNaN(n) && n > 0);
   
   if (numbers.length === 0) return null;
 
-  // Return the largest number found (usually the total amount)
-  return Math.max(...numbers);
+  // Return the largest number (in receipts, the total is usually the largest)
+  const maxNumber = Math.max(...numbers);
+  
+  console.log(`parseAmount("${text.substring(0, 50)}...") -> numbers found: [${numbers.join(', ')}], max: ${maxNumber}`);
+  
+  return maxNumber;
 }
 
 /**
