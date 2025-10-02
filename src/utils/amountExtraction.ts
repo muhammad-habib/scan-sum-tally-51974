@@ -99,7 +99,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
     normalizeDigits(line.toLowerCase()).replace(/[\u200E\u200F\u202A-\u202E\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g, '')
   );
 
-  // Pre-pass: scan from any "total" header and pick the largest numeric value on SAME line or beneath it
+  // Pre-pass: use ONLY the LAST occurrence of a "total" header (avoids column header at top)
   const totalHeaderIndices = normalizedLines
     .map((l, i) => (containsTotalKeywordNormalized(l) ? i : -1))
     .filter(i => i >= 0);
@@ -112,32 +112,36 @@ export function extractAmount(ocrText: string): ExtractedAmount {
       const merged = norm.replace(/(\d{1,3})\s(\d{3})(?!\d)/g, '$1$2');
       const ms = merged.match(/\d+(?:[.,]\d+)?/g);
       if (!ms) return null;
+      // Prefer candidates >= 1000, take the last such one, else take the last number
+      for (let p = ms.length - 1; p >= 0; p--) {
+        const v = parseFloat(ms[p].replace(',', '.'));
+        if (!isNaN(v) && v >= 1000) return v;
+      }
       const last = ms[ms.length - 1];
       const num = parseFloat(last.replace(',', '.'));
       return isNaN(num) ? null : num;
     };
 
     let headerBest: { amount: number; index: number; currency: string } | null = null;
-    totalHeaderIndices.forEach(idx => {
-      // Check SAME line first (for table structures where total is on same row)
-      const sameLineAmt = rightmostNumberForTotal(lines[idx]);
-      if (sameLineAmt !== null && sameLineAmt > 0 && sameLineAmt <= 1000000) {
-        if (!headerBest || sameLineAmt > headerBest.amount || (sameLineAmt === headerBest.amount && idx > headerBest.index)) {
-          headerBest = { amount: sameLineAmt, index: idx, currency: detectCurrency(lines[idx]) };
+
+    const lastIdx = totalHeaderIndices[totalHeaderIndices.length - 1];
+    // Check SAME line first (for table structures where total is on same row)
+    const sameLineAmt = rightmostNumberForTotal(lines[lastIdx]);
+    if (sameLineAmt !== null && sameLineAmt > 0 && sameLineAmt <= 1000000) {
+      headerBest = { amount: sameLineAmt, index: lastIdx, currency: detectCurrency(lines[lastIdx]) };
+    }
+
+    // Then check lines below (wider window to handle noisy OCR)
+    const end = Math.min(lines.length - 1, lastIdx + 30);
+    for (let j = lastIdx + 1; j <= end; j++) {
+      const amt = rightmostNumberForTotal(lines[j]);
+      if (amt !== null && amt > 0 && amt <= 1000000) {
+        if (!headerBest || amt > headerBest.amount || (amt === headerBest.amount && j > headerBest.index)) {
+          headerBest = { amount: amt, index: j, currency: detectCurrency(lines[j]) };
         }
       }
-      
-      // Then check lines below
-      const end = Math.min(lines.length - 1, idx + 12);
-      for (let j = idx + 1; j <= end; j++) {
-        const amt = rightmostNumberForTotal(lines[j]);
-        if (amt !== null && amt > 0 && amt <= 1000000) {
-          if (!headerBest || amt > headerBest.amount || (amt === headerBest.amount && j > headerBest.index)) {
-            headerBest = { amount: amt, index: j, currency: detectCurrency(lines[j]) };
-          }
-        }
-      }
-    });
+    }
+
     if (headerBest) {
       console.log(`Header-based selection -> ${headerBest.amount} (line ${headerBest.index})`);
       return {
