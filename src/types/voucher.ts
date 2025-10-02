@@ -1,3 +1,5 @@
+import { type AIVoucherAnalysis } from '@/utils/aiVoucherService';
+
 export interface Voucher {
   id: string;
   imageUrl: string;
@@ -9,6 +11,12 @@ export interface Voucher {
   detectedRows?: string[];
   createdAt: number;
   editedManually?: boolean;
+  // New AI-enhanced fields
+  method?: 'traditional' | 'ai-vision' | 'ai-ocr' | 'hybrid';
+  aiAnalysis?: AIVoucherAnalysis;
+  ocrText?: string;
+  date?: string;
+  description?: string;
 }
 
 export interface Batch {

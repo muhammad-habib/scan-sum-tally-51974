@@ -1,4 +1,5 @@
 import { parseAmount, detectCurrency, normalizeDigits } from './numberParser';
+import { AIVoucherService, type AIVoucherAnalysis } from './aiVoucherService';
 
 interface ExtractedAmount {
   amount: number | null;
@@ -6,6 +7,8 @@ interface ExtractedAmount {
   confidence: number;
   rawText?: string;
   detectedRows?: string[];
+  aiAnalysis?: AIVoucherAnalysis;
+  method: 'traditional' | 'ai-vision' | 'ai-ocr' | 'hybrid';
 }
 
 // Keywords that indicate a total amount (multilingual with variations)
@@ -437,4 +440,69 @@ export function extractTableAmounts(ocrText: string): number[] {
   }
 
   return amounts;
+}
+
+/**
+ * Enhanced AI-powered amount extraction
+ */
+export async function extractAmountWithAI(
+  ocrText: string,
+  imageBlob?: Blob,
+  aiConfig?: { apiKey: string; model?: string; maxTokens?: number }
+): Promise<ExtractedAmount> {
+  console.log('🚀 Starting AI-enhanced extraction...');
+
+  // Get traditional OCR result first
+  const traditionalResult = extractAmount(ocrText);
+  console.log('📊 Traditional OCR result:', traditionalResult);
+
+  // If traditional method has high confidence, return it
+  if (traditionalResult.confidence > 0.9) {
+    console.log('✅ Traditional method has high confidence, using it');
+    return { ...traditionalResult, method: 'traditional' };
+  }
+
+  // Try AI enhancement if config provided
+  if (aiConfig?.apiKey) {
+    try {
+      const aiService = new AIVoucherService({
+        apiKey: aiConfig.apiKey,
+        model: aiConfig.model || 'gpt-4',
+        maxTokens: aiConfig.maxTokens || 1000
+      });
+
+      // Use AI smart analysis
+      const aiResult = await aiService.smartAnalyze(imageBlob!, ocrText);
+
+      if (aiResult.amount && aiResult.confidence > traditionalResult.confidence) {
+        console.log('🤖 AI analysis found better result');
+        return {
+          amount: aiResult.amount,
+          currency: aiResult.currency,
+          confidence: Math.min(aiResult.confidence, 0.95), // Cap AI confidence
+          rawText: aiResult.aiReasoning || 'AI analysis',
+          detectedRows: traditionalResult.detectedRows,
+          aiAnalysis: aiResult,
+          method: imageBlob ? 'ai-vision' : 'ai-ocr'
+        };
+      }
+
+      // Hybrid approach: If AI and traditional agree, boost confidence
+      if (aiResult.amount && Math.abs(aiResult.amount - (traditionalResult.amount || 0)) < traditionalResult.amount! * 0.1) {
+        console.log('🤝 AI and traditional methods agree, boosting confidence');
+        return {
+          ...traditionalResult,
+          confidence: Math.min(traditionalResult.confidence + 0.2, 0.98),
+          aiAnalysis: aiResult,
+          method: 'hybrid'
+        };
+      }
+    } catch (error) {
+      console.log('⚠️ AI analysis failed, falling back to traditional method:', error);
+    }
+  }
+
+  // Fallback to traditional result
+  console.log('📋 Using traditional OCR result');
+  return { ...traditionalResult, method: 'traditional' };
 }

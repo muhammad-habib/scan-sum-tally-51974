@@ -1,13 +1,16 @@
 import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Camera, Upload, ArrowLeft, Loader2 } from 'lucide-react';
+import { Camera, Upload, ArrowLeft, Loader2, Sparkles, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { Switch } from '@/components/ui/switch';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { CameraCapture } from '@/components/camera/CameraCapture';
 import { useVoucherStore } from '@/store/voucherStore';
 import { preprocessImage, compressImage } from '@/utils/imageProcessing';
-import { extractAmount } from '@/utils/amountExtraction';
+import { extractAmount, extractAmountWithAI } from '@/utils/amountExtraction';
 import { Voucher } from '@/types/voucher';
 import { toast } from 'sonner';
 
@@ -15,9 +18,16 @@ export default function Scan() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showCamera, setShowCamera] = useState(false);
+  const [showAISettings, setShowAISettings] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [statusText, setStatusText] = useState('');
+
+  // AI Configuration
+  const [useAI, setUseAI] = useState(false);
+  const [aiApiKey, setAiApiKey] = useState(localStorage.getItem('openai_api_key') || '');
+  const [aiModel, setAiModel] = useState('gpt-4');
+
   const { addVoucher } = useVoucherStore();
 
   const processImage = async (blob: Blob) => {
@@ -42,47 +52,89 @@ export default function Scan() {
       
       const ocrText = await performOCR(preprocessed);
 
-      // Extract amount
+      // Extract amount with AI enhancement if enabled
       setProgress(80);
-      setStatusText('استخراج المبلغ / Extracting amount...');
-      const extracted = extractAmount(ocrText);
+      if (useAI && aiApiKey) {
+        setStatusText('تحليل بالذكاء الاصطناعي / AI Analysis...');
+        const extracted = await extractAmountWithAI(ocrText, blob, {
+          apiKey: aiApiKey,
+          model: aiModel,
+          maxTokens: 1000
+        });
 
-      // Create voucher
-      const voucher: Voucher = {
-        id: `v-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        imageUrl,
-        imageBlob: compressed,
-        amount: extracted.amount,
-        currency: extracted.currency,
-        confidence: extracted.confidence,
-        rawText: extracted.rawText,
-        detectedRows: extracted.detectedRows,
-        createdAt: Date.now(),
-        editedManually: false,
-      };
+        // Show AI method used
+        const methodEmoji = {
+          'ai-vision': '👁️',
+          'ai-ocr': '🤖',
+          'hybrid': '🤝',
+          'traditional': '📋'
+        };
 
-      await addVoucher(voucher);
-      
-      setProgress(100);
-      setStatusText('تم! / Done!');
+        toast.success(`${methodEmoji[extracted.method]} Amount extracted using ${extracted.method} method`, {
+          description: `${extracted.amount} ${extracted.currency} (${Math.round(extracted.confidence * 100)}% confidence)`
+        });
 
-      if (extracted.amount === null) {
-        toast.error('لم يُعثر على المبلغ — يُرجى التعديل يدويًا / No amount found — please edit manually');
-      } else if (extracted.confidence < 0.75) {
-        toast.warning('ثقة منخفضة — يُرجى المراجعة / Low confidence — please review');
+        if (extracted.aiAnalysis?.aiReasoning) {
+          console.log('AI Reasoning:', extracted.aiAnalysis.aiReasoning);
+        }
+
+        // Create voucher with AI metadata
+        const voucher: Voucher = {
+          id: Date.now().toString(),
+          amount: extracted.amount || 0,
+          currency: extracted.currency,
+          date: new Date().toISOString().split('T')[0],
+          description: `Scanned voucher (${extracted.method})`,
+          confidence: extracted.confidence,
+          imageUrl,
+          ocrText,
+          rawText: extracted.rawText,
+          method: extracted.method,
+          aiAnalysis: extracted.aiAnalysis,
+          createdAt: Date.now() // Fix: Add missing createdAt field
+        };
+
+        addVoucher(voucher);
       } else {
-        toast.success('تم مسح الفاتورة بنجاح / Voucher scanned successfully');
+        setStatusText('استخراج المبلغ / Extracting amount...');
+        const extracted = extractAmount(ocrText);
+
+        // Create voucher with traditional method
+        const voucher: Voucher = {
+          id: Date.now().toString(),
+          amount: extracted.amount || 0,
+          currency: extracted.currency,
+          date: new Date().toISOString().split('T')[0],
+          description: 'Scanned voucher (traditional)',
+          confidence: extracted.confidence,
+          imageUrl,
+          ocrText,
+          rawText: extracted.rawText,
+          method: 'traditional',
+          createdAt: Date.now() // Fix: Add missing createdAt field
+        };
+
+        addVoucher(voucher);
       }
 
+      setProgress(100);
+      setStatusText('مكتمل / Complete!');
+
       setTimeout(() => {
-        navigate('/review');
+        navigate('/review', {
+          state: {
+            fromScan: true,
+            method: useAI ? 'ai-enhanced' : 'traditional'
+          }
+        });
       }, 500);
 
     } catch (error) {
-      console.error('Processing error:', error);
-      toast.error('فشل معالجة الصورة / Failed to process image');
+      console.error('Processing failed:', error);
+      toast.error('فشل في معالجة الصورة / Failed to process image');
       setIsProcessing(false);
       setProgress(0);
+      setStatusText('');
     }
   };
 
@@ -130,11 +182,12 @@ export default function Scan() {
     });
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      processImage(file);
+  const saveAISettings = () => {
+    if (aiApiKey) {
+      localStorage.setItem('openai_api_key', aiApiKey);
+      toast.success('AI settings saved');
     }
+    setShowAISettings(false);
   };
 
   if (showCamera) {
@@ -150,102 +203,180 @@ export default function Scan() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8">
-        <div className="max-w-2xl mx-auto space-y-6">
-          {/* Header */}
-          <div className="flex items-center gap-4">
-            <Button
-              onClick={() => navigate('/')}
-              variant="ghost"
-              size="icon"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <div>
-              <h1 className="text-2xl font-bold">مسح فاتورة / Scan Voucher</h1>
-            </div>
-          </div>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      <div className="max-w-md mx-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate('/')}
+            className="rounded-full"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
 
-          {/* Processing State */}
-          {isProcessing ? (
-            <Card className="p-8 space-y-6">
-              <div className="text-center space-y-4">
-                <div className="flex justify-center">
-                  <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
-                    <Loader2 className="h-8 w-8 text-primary animate-spin" />
-                  </div>
+          <h1 className="text-xl font-bold text-gray-900">
+            مسح الإيصال / Scan Receipt
+          </h1>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setShowAISettings(!showAISettings)}
+            className="rounded-full"
+          >
+            <Settings className="h-5 w-5" />
+          </Button>
+        </div>
+
+        {/* AI Settings Panel */}
+        {showAISettings && (
+          <Card className="p-4 mb-6 border-blue-200">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Sparkles className="h-5 w-5 text-blue-600" />
+                  <Label htmlFor="ai-toggle">AI Enhancement</Label>
                 </div>
-                <p className="text-lg font-medium">{statusText}</p>
-                <Progress value={progress} className="h-2" />
-                <p className="text-sm text-muted-foreground">
-                  {progress}%
-                </p>
+                <Switch
+                  id="ai-toggle"
+                  checked={useAI}
+                  onCheckedChange={setUseAI}
+                />
+              </div>
+
+              {useAI && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="api-key">OpenAI API Key</Label>
+                    <Input
+                      id="api-key"
+                      type="password"
+                      placeholder="sk-..."
+                      value={aiApiKey}
+                      onChange={(e) => setAiApiKey(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="model">Model</Label>
+                    <select
+                      id="model"
+                      value={aiModel}
+                      onChange={(e) => setAiModel(e.target.value)}
+                      className="w-full p-2 border rounded-md"
+                    >
+                      <option value="gpt-4">GPT-4 (Recommended)</option>
+                      <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                      <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                    </select>
+                  </div>
+
+                  <Button onClick={saveAISettings} className="w-full">
+                    Save AI Settings
+                  </Button>
+                </>
+              )}
+            </div>
+          </Card>
+        )}
+
+        {/* Status Display */}
+        {isProcessing && (
+          <Card className="p-6 mb-6">
+            <div className="text-center space-y-4">
+              <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-600" />
+              <div>
+                <p className="font-medium text-gray-900">{statusText}</p>
+                <Progress value={progress} className="mt-2" />
+                <p className="text-sm text-gray-500 mt-1">{progress}%</p>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* Scan Options */}
+        {!showCamera && !isProcessing && (
+          <div className="space-y-4">
+            <Card className="p-6">
+              <div className="text-center space-y-4">
+                <Camera className="h-12 w-12 mx-auto text-blue-600" />
+                <div>
+                  <h3 className="font-semibold text-gray-900">
+                    التقط صورة / Take Photo
+                  </h3>
+                  <p className="text-sm text-gray-500">
+                    استخدم الكاميرا لمسح الإيصال / Use camera to scan receipt
+                  </p>
+                  {useAI && (
+                    <div className="flex items-center justify-center mt-2 text-blue-600">
+                      <Sparkles className="h-4 w-4 mr-1" />
+                      <span className="text-xs">AI Enhanced</span>
+                    </div>
+                  )}
+                </div>
+                <Button
+                  onClick={() => setShowCamera(true)}
+                  className="w-full"
+                  disabled={isProcessing}
+                >
+                  فتح الكاميرا / Open Camera
+                </Button>
               </div>
             </Card>
-          ) : (
-            <>
-              {/* Camera Option */}
-              <Card
-                className="p-8 cursor-pointer hover:shadow-lg transition-all border-2 hover:border-primary"
-                onClick={() => setShowCamera(true)}
-              >
-                <div className="flex items-center gap-6">
-                  <div className="w-16 h-16 rounded-full bg-gradient-primary flex items-center justify-center flex-shrink-0">
-                    <Camera className="h-8 w-8 text-primary-foreground" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="text-xl font-semibold mb-1">
-                      استخدم الكاميرا / Use Camera
-                    </h3>
-                    <p className="text-muted-foreground">
-                      التقط صورة للفاتورة / Take a photo of the voucher
-                    </p>
-                  </div>
+
+            <Card className="p-6">
+              <div className="text-center space-y-4">
+                <Upload className="h-12 w-12 mx-auto text-green-600" />
+                <div>
+                  <h3 className="font-semibold text-gray-900">
+                    رفع صورة / Upload Image
+                  </h3>
+                  <p className="text-sm text-gray-500">
+                    اختر صورة من الاستوديو / Choose image from gallery
+                  </p>
+                  {useAI && (
+                    <div className="flex items-center justify-center mt-2 text-blue-600">
+                      <Sparkles className="h-4 w-4 mr-1" />
+                      <span className="text-xs">AI Enhanced</span>
+                    </div>
+                  )}
                 </div>
-              </Card>
+                <Button
+                  onClick={() => fileInputRef.current?.click()}
+                  variant="outline"
+                  className="w-full"
+                  disabled={isProcessing}
+                >
+                  اختيار صورة / Choose Image
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
 
-              {/* Upload Option */}
-              <Card
-                className="p-8 cursor-pointer hover:shadow-lg transition-all border-2 hover:border-accent"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <div className="flex items-center gap-6">
-                  <div className="w-16 h-16 rounded-full bg-gradient-accent flex items-center justify-center flex-shrink-0">
-                    <Upload className="h-8 w-8 text-accent-foreground" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="text-xl font-semibold mb-1">
-                      رفع صورة / Upload Image
-                    </h3>
-                    <p className="text-muted-foreground">
-                      اختر صورة من جهازك / Choose an image from your device
-                    </p>
-                  </div>
-                </div>
-              </Card>
+        {/* Camera Component */}
+        {showCamera && (
+          <CameraCapture
+            onCapture={processImage}
+            onClose={() => setShowCamera(false)}
+          />
+        )}
 
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleFileUpload}
-              />
-            </>
-          )}
-
-          {/* Tips */}
-          <Card className="p-6 bg-muted/50">
-            <h3 className="font-semibold mb-3">نصائح للحصول على أفضل النتائج / Tips for best results:</h3>
-            <ul className="space-y-2 text-sm text-muted-foreground">
-              <li>• تأكد من الإضاءة الجيدة / Ensure good lighting</li>
-              <li>• اجعل الفاتورة مسطحة ومستقيمة / Keep voucher flat and straight</li>
-              <li>• تأكد من وضوح الأرقام / Ensure numbers are clearly visible</li>
-              <li>• تجنب الظلال والانعكاسات / Avoid shadows and reflections</li>
-            </ul>
-          </Card>
-        </div>
+        {/* Hidden File Input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) {
+              processImage(file);
+            }
+          }}
+          className="hidden"
+        />
       </div>
     </div>
   );
