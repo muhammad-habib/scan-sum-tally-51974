@@ -39,6 +39,23 @@ const IGNORE_KEYWORDS = [
 ];
 
 /**
+ * Helpers for keyword context
+ */
+function containsTotalKeywordNormalized(normalized: string): boolean {
+  return TOTAL_KEYWORDS.some(kw => normalized.includes(kw));
+}
+
+function hasTotalKeywordNearby(index: number, normalizedLines: string[], window: number = 2): boolean {
+  const start = Math.max(0, index - window);
+  const end = Math.min(normalizedLines.length - 1, index + window);
+  for (let i = start; i <= end; i++) {
+    if (i === index) continue;
+    if (containsTotalKeywordNormalized(normalizedLines[i])) return true;
+  }
+  return false;
+}
+
+/**
  * Calculate confidence score based on various factors
  */
 function calculateConfidence(
@@ -64,7 +81,6 @@ function calculateConfidence(
 
   return Math.min(confidence, 1.0);
 }
-
 /**
  * Extract amount from OCR text using keyword heuristics
  */
@@ -79,6 +95,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
   }
 
   const lines = ocrText.split('\n').filter(line => line.trim().length > 0);
+  const normalizedLines = lines.map(line => normalizeDigits(line.toLowerCase()));
   
   let bestCandidate: {
     amount: number;
@@ -86,19 +103,21 @@ export function extractAmount(ocrText: string): ExtractedAmount {
     confidence: number;
     lineIndex: number;
     line: string;
+    hasTotalContext: boolean;
   } | null = null;
 
   console.log(`\n=== EXTRACTING AMOUNT FROM ${lines.length} LINES ===`);
 
   // Process each line
   lines.forEach((line, index) => {
-    const normalizedLine = normalizeDigits(line.toLowerCase());
+    const normalizedLine = normalizedLines[index];
     
     // Check if line contains ignore keywords without total keywords
     const hasIgnoreKeyword = IGNORE_KEYWORDS.some(kw => normalizedLine.includes(kw));
-    const hasTotalKeyword = TOTAL_KEYWORDS.some(kw => normalizedLine.includes(kw));
+    const hasTotalKeyword = containsTotalKeywordNormalized(normalizedLine);
+    const hasTotalNearbyContext = hasTotalKeyword || hasTotalKeywordNearby(index, normalizedLines, 2);
     
-    if (hasIgnoreKeyword && !hasTotalKeyword) {
+    if (hasIgnoreKeyword && !hasTotalNearbyContext) {
       console.log(`Line ${index}: SKIPPED (ignore keyword: registration/tax/contact)`);
       return; // Skip this line
     }
@@ -122,40 +141,44 @@ export function extractAmount(ocrText: string): ExtractedAmount {
     // Detect currency
     const currency = detectCurrency(line);
 
-    // Calculate confidence - HEAVILY prioritize total keywords
+    // Calculate confidence - HEAVILY prioritize total keywords or nearby header
     const isLastInList = index >= lines.length - 5; // Within last 5 lines
-    const contextQuality = hasTotalKeyword ? 1.0 : 0.2;
+    const contextQuality = hasTotalNearbyContext ? 1.0 : 0.2;
     const confidence = calculateConfidence(
-      hasTotalKeyword,
+      hasTotalNearbyContext,
       isLastInList,
       amount,
       contextQuality
     );
 
-    console.log(`Line ${index}: "${line.substring(0, 50)}..." -> ${amount} ${currency} (hasTotal: ${hasTotalKeyword}, conf: ${confidence.toFixed(2)})`);
+    console.log(`Line ${index}: "${line.substring(0, 50)}..." -> ${amount} ${currency} (hasTotalContext: ${hasTotalNearbyContext}, conf: ${confidence.toFixed(2)})`);
 
     // Update best candidate
     // Priority order:
     // 1. Lines WITH total keywords win over those without
     // 2. If both have or both lack total keywords, higher confidence wins
-    const currentHasTotal = hasTotalKeyword;
-    const bestHasTotal = bestCandidate ? 
-      TOTAL_KEYWORDS.some(kw => bestCandidate.line.toLowerCase().includes(kw)) : false;
+    const currentHasTotal = hasTotalNearbyContext;
+    const bestHasTotal = bestCandidate ? bestCandidate.hasTotalContext : false;
     
-    if (!bestCandidate || 
-        (currentHasTotal && !bestHasTotal) ||
-        (currentHasTotal === bestHasTotal && confidence > bestCandidate.confidence)) {
+    if (
+      !bestCandidate ||
+      (currentHasTotal && !bestHasTotal) ||
+      (currentHasTotal === bestHasTotal && confidence > bestCandidate.confidence + 1e-6) ||
+      (currentHasTotal === bestHasTotal && Math.abs(confidence - bestCandidate.confidence) <= 0.01 &&
+        (amount > bestCandidate.amount || (amount === bestCandidate.amount && index > bestCandidate.lineIndex)))
+    ) {
       bestCandidate = {
         amount,
         currency,
         confidence,
         lineIndex: index,
         line,
+        hasTotalContext: currentHasTotal,
       };
     }
   });
 
-  console.log(`=== BEST CANDIDATE: ${bestCandidate ? `${bestCandidate.amount} (line ${bestCandidate.lineIndex})` : 'NONE'} ===\n`);
+  console.log(`=== BEST CANDIDATE: ${bestCandidate ? `${bestCandidate.amount} (line ${bestCandidate.lineIndex}, totalCtx: ${bestCandidate.hasTotalContext})` : 'NONE'} ===\n`);
 
   // If we found a candidate, return it
   if (bestCandidate) {
