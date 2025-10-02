@@ -21,44 +21,65 @@ export function normalizeDigits(text: string): string {
 }
 
 /**
- * Extract and parse a number from text, handling various formats
+ * Extract and parse a number from text, handling various formats including Arabic
  */
 export function parseAmount(text: string): number | null {
   if (!text) return null;
 
+  // Store original for logging
+  const original = text.substring(0, 80);
+
   // Normalize digits first (convert Arabic/Persian to Western)
   let normalized = normalizeDigits(text);
 
-  // Remove ALL non-numeric content except digits, spaces, and decimal separators
-  // Remove Arabic text, currency symbols, and any letters
-  normalized = normalized.replace(/[^\d\s.,]/g, ' ');
+  // Remove common Arabic/English words that appear with numbers but aren't part of the number
+  // Keep these separate from the number itself
+  const cleanText = normalized
+    .replace(/\b(ألف|الف|الاف|ألاف|مليون|الملايين|thousand|million|k|m)\b/gi, ' ')
+    .replace(/\b(جنيه|دولار|يورو|ريال|درهم|pound|dollar|euro|egp|usd|eur|cve)\b/gi, ' ')
+    .replace(/[€$£¥₹]/g, ' ');
 
-  // Clean up whitespace
-  normalized = normalized.replace(/\s+/g, ' ').trim();
+  // Remove ALL other non-numeric characters except digits, spaces, commas, dots
+  let cleaned = cleanText.replace(/[^\d\s.,]/g, ' ');
 
-  // Try to find space-separated digit sequences that form a single number
-  // e.g., "50 300" or "7 600" should be treated as "50300" and "7600"
-  const spacePattern = /(\d+)\s+(\d{3})\b/g;
-  normalized = normalized.replace(spacePattern, '$1$2');
+  // Normalize whitespace
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
-  // Remove remaining spaces between digits
-  normalized = normalized.replace(/(\d)\s+(\d)/g, '$1$2');
+  // Handle space-separated thousands: "50 300" -> "50300"
+  // Match patterns like: digit(s) space digit(3) word-boundary
+  cleaned = cleaned.replace(/(\d{1,3})\s+(\d{3})\b/g, '$1$2');
+  
+  // Handle additional space-separated patterns: "7 600" -> "7600" 
+  cleaned = cleaned.replace(/(\d{1,2})\s+(\d{3})\b/g, '$1$2');
 
-  // Extract all sequences of digits (with optional decimal point)
-  const matches = normalized.match(/\d+\.?\d*/g);
-  if (!matches || matches.length === 0) return null;
+  // Remove any remaining spaces between digits
+  cleaned = cleaned.replace(/(\d)\s+(\d)/g, '$1$2');
 
-  // Parse all numbers
+  // Extract all number sequences (with optional decimal)
+  const matches = cleaned.match(/\d+(?:[.,]\d+)?/g);
+  if (!matches || matches.length === 0) {
+    console.log(`parseAmount("${original}") -> NO NUMBERS FOUND`);
+    return null;
+  }
+
+  // Parse and validate all numbers
   const numbers = matches
-    .map(m => parseFloat(m))
+    .map(m => {
+      // Replace comma with dot for decimal parsing
+      const normalized = m.replace(',', '.');
+      return parseFloat(normalized);
+    })
     .filter(n => !isNaN(n) && n > 0);
   
-  if (numbers.length === 0) return null;
+  if (numbers.length === 0) {
+    console.log(`parseAmount("${original}") -> NO VALID NUMBERS`);
+    return null;
+  }
 
-  // Return the largest number (in receipts, the total is usually the largest)
+  // Return the largest number (totals are typically the largest on receipts)
   const maxNumber = Math.max(...numbers);
   
-  console.log(`parseAmount("${text.substring(0, 60)}...") -> found: [${numbers.join(', ')}] -> max: ${maxNumber}`);
+  console.log(`parseAmount("${original}") -> numbers: [${numbers.join(', ')}] -> MAX: ${maxNumber}`);
   
   return maxNumber;
 }

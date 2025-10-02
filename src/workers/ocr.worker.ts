@@ -4,7 +4,7 @@ let worker: Awaited<ReturnType<typeof createWorker>> | null = null;
 
 async function initWorker() {
   if (!worker) {
-    worker = await createWorker(['eng', 'ara', 'deu', 'por'], 1, {
+    worker = await createWorker(['ara', 'eng', 'deu', 'por'], 1, {
       logger: (m) => {
         // Send progress updates to main thread
         if (m.status === 'recognizing text') {
@@ -14,6 +14,11 @@ async function initWorker() {
           });
         }
       },
+    });
+    
+    // Configure Tesseract for better Arabic recognition
+    await worker.setParameters({
+      preserve_interword_spaces: '1', // Keep spaces between words
     });
   }
   return worker;

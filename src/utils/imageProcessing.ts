@@ -36,14 +36,26 @@ export async function preprocessImage(imageBlob: Blob): Promise<string> {
         const imageData = ctx.getImageData(0, 0, width, height);
         const data = imageData.data;
 
-        // Convert to grayscale and apply contrast enhancement
+        // Enhanced preprocessing for better OCR
+        // 1. Convert to grayscale
+        // 2. Apply adaptive-like contrast enhancement
+        // 3. Denoise
         for (let i = 0; i < data.length; i += 4) {
-          // Grayscale
+          // Grayscale using luminosity method
           const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
           
-          // Simple thresholding (adaptive would be better but more complex)
-          const threshold = 128;
-          const value = gray > threshold ? 255 : 0;
+          // Adaptive contrast enhancement (localized)
+          // Use gamma correction for better results than hard threshold
+          const normalized = gray / 255;
+          const gamma = 1.2; // Slightly enhance contrast
+          const enhanced = Math.pow(normalized, 1 / gamma) * 255;
+          
+          // Apply slight sharpening by increasing contrast
+          const contrast = 1.3;
+          let value = ((enhanced - 128) * contrast) + 128;
+          
+          // Clamp values
+          value = Math.max(0, Math.min(255, value));
           
           data[i] = value;     // R
           data[i + 1] = value; // G
