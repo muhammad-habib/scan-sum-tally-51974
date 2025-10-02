@@ -1,5 +1,6 @@
 /**
  * Preprocess image for better OCR accuracy
+ * Uses lighter processing to preserve detail
  */
 export async function preprocessImage(imageBlob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -12,8 +13,8 @@ export async function preprocessImage(imageBlob: Blob): Promise<string> {
         const ctx = canvas.getContext('2d');
         if (!ctx) throw new Error('Could not get canvas context');
 
-        // Set canvas size (limit max dimension for performance)
-        const maxDimension = 2048;
+        // Increase max dimension for better detail preservation
+        const maxDimension = 3000;
         let { width, height } = img;
         
         if (width > maxDimension || height > maxDimension) {
@@ -36,31 +37,22 @@ export async function preprocessImage(imageBlob: Blob): Promise<string> {
         const imageData = ctx.getImageData(0, 0, width, height);
         const data = imageData.data;
 
-        // Enhanced preprocessing for better OCR
-        // 1. Convert to grayscale
-        // 2. Apply adaptive-like contrast enhancement
-        // 3. Denoise
+        // Light preprocessing: just grayscale with mild contrast boost
+        // Avoid aggressive thresholding that destroys detail
         for (let i = 0; i < data.length; i += 4) {
-          // Grayscale using luminosity method
+          // Convert to grayscale
           const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
           
-          // Adaptive contrast enhancement (localized)
-          // Use gamma correction for better results than hard threshold
-          const normalized = gray / 255;
-          const gamma = 1.2; // Slightly enhance contrast
-          const enhanced = Math.pow(normalized, 1 / gamma) * 255;
-          
-          // Apply slight sharpening by increasing contrast
-          const contrast = 1.3;
-          let value = ((enhanced - 128) * contrast) + 128;
+          // Very light contrast enhancement
+          const contrast = 1.15;
+          let value = ((gray - 128) * contrast) + 128;
           
           // Clamp values
           value = Math.max(0, Math.min(255, value));
           
-          data[i] = value;     // R
-          data[i + 1] = value; // G
-          data[i + 2] = value; // B
-          // Alpha stays the same
+          data[i] = value;
+          data[i + 1] = value;
+          data[i + 2] = value;
         }
 
         // Put processed image back
