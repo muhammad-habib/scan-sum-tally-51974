@@ -96,6 +96,36 @@ export function extractAmount(ocrText: string): ExtractedAmount {
 
   const lines = ocrText.split('\n').filter(line => line.trim().length > 0);
   const normalizedLines = lines.map(line => normalizeDigits(line.toLowerCase()));
+
+  // Pre-pass: scan forward from any "total" header and pick the largest numeric value beneath it
+  const totalHeaderIndices = normalizedLines
+    .map((l, i) => (containsTotalKeywordNormalized(l) ? i : -1))
+    .filter(i => i >= 0);
+
+  if (totalHeaderIndices.length > 0) {
+    let headerBest: { amount: number; index: number; currency: string } | null = null;
+    totalHeaderIndices.forEach(idx => {
+      const end = Math.min(lines.length - 1, idx + 12); // look up to 12 lines below header
+      for (let j = idx + 1; j <= end; j++) {
+        const amt = parseAmount(lines[j]);
+        if (amt !== null && amt > 0 && amt <= 1000000) {
+          if (!headerBest || amt > headerBest.amount || (amt === headerBest.amount && j > headerBest.index)) {
+            headerBest = { amount: amt, index: j, currency: detectCurrency(lines[j]) };
+          }
+        }
+      }
+    });
+    if (headerBest) {
+      console.log(`Header-based selection -> ${headerBest.amount} (line ${headerBest.index})`);
+      return {
+        amount: headerBest.amount,
+        currency: headerBest.currency,
+        confidence: 0.95,
+        rawText: lines[headerBest.index],
+        detectedRows: lines,
+      };
+    }
+  }
   
   let bestCandidate: {
     amount: number;
