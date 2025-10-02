@@ -26,6 +26,13 @@ const TOTAL_KEYWORDS = [
   'total', 'montant', 'somme', 'total général',
 ];
 
+// Keywords that are likely table headers, not actual totals
+const HEADER_KEYWORDS = [
+  'السعرالإجمالي', 'السعر الإجمالي', // "Total Price" header
+  'نوع الصنف', 'الحجم', 'العدد', 'السعر', // Table column headers
+  'الإجمالي |', '| الإجمالي', // Table header with pipes
+];
+
 // Keywords to ignore (VAT, tax, registration numbers, etc.)
 const IGNORE_KEYWORDS = [
   'vat', 'tax', 'مضافة', 'ضريبة', 'steuer', 'imposto',
@@ -37,6 +44,19 @@ const IGNORE_KEYWORDS = [
   'phone', 'tel', 'email', 'هاتف', 'تليفون', 'بريد',
   'تاريخ', 'date', 'datum',
 ];
+
+/**
+ * Remove Arabic diacritics and formatting characters
+ */
+function removeArabicDiacritics(text: string): string {
+  // Remove bidirectional control characters and Arabic diacritics
+  return text.replace(/[\u200E\u200F\u202A\u202B\u202C\u202D\u202E]/g, '') // Bidirectional marks
+             .replace(/[\u0610-\u061A]/g, '') // Arabic signs
+             .replace(/[\u064B-\u065F]/g, '') // Arabic diacritics
+             .replace(/[\u0670]/g, '') // Arabic letter superscript alef
+             .replace(/[\u06D6-\u06ED]/g, '') // Arabic small high marks
+             .replace(/[\u0640]/g, ''); // Arabic tatweel
+}
 
 /**
  * Helpers for keyword context
@@ -96,62 +116,113 @@ export function extractAmount(ocrText: string): ExtractedAmount {
 
   const lines = ocrText.split('\n').filter(line => line.trim().length > 0);
   const normalizedLines = lines.map(line =>
-    normalizeDigits(line.toLowerCase()).replace(/[\u200E\u200F\u202A-\u202E\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g, '')
+    removeArabicDiacritics(normalizeDigits(line.toLowerCase()))
   );
+
+  console.log('=== PROCESSING LINES ===');
+  lines.forEach((line, index) => {
+    console.log(`Line ${index}: "${line}"`);
+    console.log(`  Normalized: "${normalizedLines[index]}"`);
+    console.log(`  Has total keyword: ${containsTotalKeywordNormalized(normalizedLines[index])}`);
+  });
 
   // Pre-pass: use ONLY the LAST occurrence of a "total" header (avoids column header at top)
   const totalHeaderIndices = normalizedLines
     .map((l, i) => (containsTotalKeywordNormalized(l) ? i : -1))
     .filter(i => i >= 0);
 
+  console.log(`Found total keyword indices: ${totalHeaderIndices}`);
+
   if (totalHeaderIndices.length > 0) {
-    // Helper scoped to totals context: pick the RIGHTMOST number on a line
-    // and merge spaced thousands like "50 300" -> "50300" (common in totals)
-    const rightmostNumberForTotal = (raw: string): number | null => {
-      const norm = normalizeDigits(raw).replace(/[\u200E\u200F\u202A-\u202E\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g, '');
-      const merged = norm.replace(/(\d{1,3})\s(\d{3})(?!\d)/g, '$1$2');
-      const ms = merged.match(/\d+(?:[.,]\d+)?/g);
-      if (!ms) return null;
-      // Prefer candidates >= 1000, take the last such one, else take the last number
-      for (let p = ms.length - 1; p >= 0; p--) {
-        const v = parseFloat(ms[p].replace(',', '.'));
-        if (!isNaN(v) && v >= 1000) return v;
-      }
-      const last = ms[ms.length - 1];
-      const num = parseFloat(last.replace(',', '.'));
-      return isNaN(num) ? null : num;
-    };
-
-    let headerBest: { amount: number; index: number; currency: string } | null = null;
-
     const lastIdx = totalHeaderIndices[totalHeaderIndices.length - 1];
-    // Check SAME line first (for table structures where total is on same row)
-    const sameLineAmt = rightmostNumberForTotal(lines[lastIdx]);
-    if (sameLineAmt !== null && sameLineAmt > 0 && sameLineAmt <= 1000000) {
-      headerBest = { amount: sameLineAmt, index: lastIdx, currency: detectCurrency(lines[lastIdx]) };
+    const totalLine = lines[lastIdx];
+
+    console.log(`Processing total line ${lastIdx}: "${totalLine}"`);
+
+    // Enhanced Arabic total parsing for table structures
+    // Pattern 1: Table row with الإجمالي in first column and amount in last column
+    const tableRowPattern = /الإجمالي.*?\|\s*.*?\|\s*.*?\|\s*.*?\|\s*(\d+)\s*ألف?/i;
+    const tableMatch = totalLine.match(tableRowPattern);
+
+    if (tableMatch) {
+      const amount = parseFloat(tableMatch[1]);
+      console.log(`Table row pattern match: ${amount} from "${tableMatch[1]}"`);
+
+      if (!isNaN(amount) && amount > 0) {
+        return {
+          amount: amount,
+          currency: detectCurrency(totalLine),
+          confidence: 0.99,
+          rawText: totalLine,
+          detectedRows: lines,
+        };
+      }
     }
 
-    // Then check lines below (wider window to handle noisy OCR)
-    const end = Math.min(lines.length - 1, lastIdx + 30);
-    for (let j = lastIdx + 1; j <= end; j++) {
-      const amt = rightmostNumberForTotal(lines[j]);
-      if (amt !== null && amt > 0 && amt <= 1000000) {
-        if (!headerBest || amt > headerBest.amount || (amt === headerBest.amount && j > headerBest.index)) {
-          headerBest = { amount: amt, index: j, currency: detectCurrency(lines[j]) };
+    // Pattern 2: Simple الإجمالي followed by amount and ألف
+    const simplePattern = /الإجمالي.*?(\d+)\s*ألف/i;
+    const simpleMatch = totalLine.match(simplePattern);
+
+    if (simpleMatch) {
+      const amount = parseFloat(simpleMatch[1]);
+      console.log(`Simple pattern match: ${amount} from "${simpleMatch[1]}"`);
+
+      if (!isNaN(amount) && amount > 0) {
+        return {
+          amount: amount,
+          currency: detectCurrency(totalLine),
+          confidence: 0.98,
+          rawText: totalLine,
+          detectedRows: lines,
+        };
+      }
+    }
+
+    // Pattern 3: Any number followed by ألف in a total line
+    const alefPattern = /(\d+)\s*ألف/i;
+    const alefMatch = totalLine.match(alefPattern);
+
+    if (alefMatch) {
+      const amount = parseFloat(alefMatch[1]);
+      console.log(`Alef pattern match: ${amount} from "${alefMatch[1]}"`);
+
+      if (!isNaN(amount) && amount > 0) {
+        return {
+          amount: amount,
+          currency: detectCurrency(totalLine),
+          confidence: 0.97,
+          rawText: totalLine,
+          detectedRows: lines,
+        };
+      }
+    }
+
+    // Pattern 4: Split by pipes and take the rightmost number
+    if (totalLine.includes('|')) {
+      const columns = totalLine.split('|').map(col => col.trim());
+      console.log(`Table columns: ${columns.join(' | ')}`);
+
+      // Look for the rightmost column with a number
+      for (let i = columns.length - 1; i >= 0; i--) {
+        const numberMatch = columns[i].match(/(\d+)/);
+        if (numberMatch) {
+          const amount = parseFloat(numberMatch[1]);
+          console.log(`Rightmost column number: ${amount} from column "${columns[i]}"`);
+
+          if (!isNaN(amount) && amount > 1000) { // Totals are usually > 1000
+            return {
+              amount: amount,
+              currency: detectCurrency(totalLine),
+              confidence: 0.96,
+              rawText: totalLine,
+              detectedRows: lines,
+            };
+          }
         }
       }
     }
 
-    if (headerBest) {
-      console.log(`Header-based selection -> ${headerBest.amount} (line ${headerBest.index})`);
-      return {
-        amount: headerBest.amount,
-        currency: headerBest.currency,
-        confidence: 0.95,
-        rawText: lines[headerBest.index],
-        detectedRows: lines,
-      };
-    }
+    // ...existing fallback logic...
   }
   
   let bestCandidate: {
@@ -172,9 +243,16 @@ export function extractAmount(ocrText: string): ExtractedAmount {
     // Check if line contains ignore keywords without total keywords
     const hasIgnoreKeyword = IGNORE_KEYWORDS.some(kw => normalizedLine.includes(kw));
     const hasTotalKeyword = containsTotalKeywordNormalized(normalizedLine);
-    const hasTotalNearbyContext = hasTotalKeyword || hasTotalKeywordNearby(index, normalizedLines, 2);
-    
-    if (hasIgnoreKeyword && !hasTotalNearbyContext) {
+
+    // Special check: Does this line contain "ألف" indicator? This is very strong signal for Arabic totals
+    const hasAlefIndicator = /ألف|الف/.test(line);
+
+    // Check if this is likely a table header rather than actual total
+    const isTableHeader = HEADER_KEYWORDS.some(kw => normalizedLine.includes(kw));
+
+    const hasTotalNearbyContext = (hasTotalKeyword && !isTableHeader) || hasTotalKeywordNearby(index, normalizedLines, 2);
+
+    if (hasIgnoreKeyword && !hasTotalNearbyContext && !hasAlefIndicator) {
       console.log(`Line ${index}: SKIPPED (ignore keyword: registration/tax/contact)`);
       return; // Skip this line
     }
@@ -211,30 +289,37 @@ export function extractAmount(ocrText: string): ExtractedAmount {
     // Detect currency
     const currency = detectCurrency(line);
 
-    // Calculate confidence - HEAVILY prioritize total keywords or nearby header
+    // Calculate confidence - HEAVILY prioritize "ألف" indicator and actual totals over table headers
     const isLastInList = index >= lines.length - 5; // Within last 5 lines
-    const contextQuality = hasTotalNearbyContext ? 1.0 : 0.2;
+    let contextQuality = 0.2;
+
+    if (hasAlefIndicator) {
+      contextQuality = 1.5; // "ألف" is strongest indicator
+    } else if (hasTotalNearbyContext && !isTableHeader) {
+      contextQuality = 1.0; // Real total keyword, not header
+    } else if (isTableHeader) {
+      contextQuality = 0.1; // Table header is weak signal
+    }
+
     const confidence = calculateConfidence(
-      hasTotalNearbyContext,
+      hasAlefIndicator || (hasTotalNearbyContext && !isTableHeader),
       isLastInList,
       amount,
       contextQuality
     );
 
-    console.log(`Line ${index}: "${line.substring(0, 50)}..." -> ${amount} ${currency} (hasTotalContext: ${hasTotalNearbyContext}, conf: ${confidence.toFixed(2)})`);
+    console.log(`Line ${index}: "${line.substring(0, 50)}..." -> ${amount} ${currency} (hasAlef: ${hasAlefIndicator}, totalCtx: ${hasTotalNearbyContext}, header: ${isTableHeader}, conf: ${confidence.toFixed(2)})`);
 
-    // Update best candidate
-    // Priority order:
-    // 1. Lines WITH total keywords win over those without
-    // 2. If both have or both lack total keywords, higher confidence wins
-    const currentHasTotal = hasTotalNearbyContext;
-    const bestHasTotal = bestCandidate ? bestCandidate.hasTotalContext : false;
-    
+    // Update best candidate - prioritize "ألف" lines over everything else
+    const currentHasAlefOrTotal = hasAlefIndicator || (hasTotalNearbyContext && !isTableHeader);
+    const bestHasAlefOrTotal = bestCandidate ?
+      (/ألف|الف/.test(bestCandidate.line) || (bestCandidate.hasTotalContext && !HEADER_KEYWORDS.some(kw => bestCandidate.line.toLowerCase().includes(kw)))) : false;
+
     if (
       !bestCandidate ||
-      (currentHasTotal && !bestHasTotal) ||
-      (currentHasTotal === bestHasTotal && confidence > bestCandidate.confidence + 1e-6) ||
-      (currentHasTotal === bestHasTotal && Math.abs(confidence - bestCandidate.confidence) <= 0.01 &&
+      (currentHasAlefOrTotal && !bestHasAlefOrTotal) ||
+      (currentHasAlefOrTotal === bestHasAlefOrTotal && confidence > bestCandidate.confidence + 1e-6) ||
+      (currentHasAlefOrTotal === bestHasAlefOrTotal && Math.abs(confidence - bestCandidate.confidence) <= 0.01 &&
         (amount > bestCandidate.amount || (amount === bestCandidate.amount && index > bestCandidate.lineIndex)))
     ) {
       bestCandidate = {
@@ -243,7 +328,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
         confidence,
         lineIndex: index,
         line,
-        hasTotalContext: currentHasTotal,
+        hasTotalContext: currentHasAlefOrTotal,
       };
     }
   });
@@ -252,6 +337,57 @@ export function extractAmount(ocrText: string): ExtractedAmount {
 
   // If we found a candidate, return it
   if (bestCandidate) {
+    // Special handling for Arabic receipts when no total keyword was found
+    // In this case, look for the sum of all reasonable amounts vs the largest single amount
+    if (!bestCandidate.hasTotalContext && detectCurrency(ocrText).includes('EG')) {
+      console.log('=== ARABIC RECEIPT FALLBACK: Analyzing all amounts ===');
+
+      const allAmounts: number[] = [];
+      lines.forEach((line, index) => {
+        const amount = parseAmount(line);
+        if (amount && amount >= 1000 && amount <= 100000) { // Reasonable receipt amounts
+          allAmounts.push(amount);
+          console.log(`Found amount: ${amount} from line ${index}: "${line.substring(0, 50)}..."`);
+        }
+      });
+
+      if (allAmounts.length >= 2) {
+        // If we have multiple amounts, the total should be the sum or the largest
+        const sumOfAmounts = allAmounts.reduce((sum, amt) => sum + amt, 0);
+        const maxAmount = Math.max(...allAmounts);
+
+        console.log(`All amounts: [${allAmounts.join(', ')}]`);
+        console.log(`Sum: ${sumOfAmounts}, Max: ${maxAmount}`);
+
+        // If the largest amount is close to the sum of others, it's likely the total
+        const sumOfOthers = sumOfAmounts - maxAmount;
+        const isLikelyTotal = maxAmount > sumOfOthers * 0.8; // Max is significant portion
+
+        if (isLikelyTotal && maxAmount !== bestCandidate.amount) {
+          console.log(`Selecting ${maxAmount} as likely total (was ${bestCandidate.amount})`);
+          return {
+            amount: maxAmount,
+            currency: detectCurrency(ocrText),
+            confidence: 0.75, // Lower confidence due to poor OCR
+            rawText: lines.find(line => parseAmount(line) === maxAmount) || bestCandidate.line,
+            detectedRows: lines,
+          };
+        }
+
+        // If the sum makes sense as a total, prefer it
+        if (sumOfAmounts > maxAmount * 1.5 && sumOfAmounts <= 100000) {
+          console.log(`Calculated total from sum: ${sumOfAmounts}`);
+          return {
+            amount: sumOfAmounts,
+            currency: detectCurrency(ocrText),
+            confidence: 0.70, // Lower confidence for calculated total
+            rawText: `Calculated from: ${allAmounts.join(' + ')}`,
+            detectedRows: lines,
+          };
+        }
+      }
+    }
+
     return {
       amount: bestCandidate.amount,
       currency: bestCandidate.currency,
