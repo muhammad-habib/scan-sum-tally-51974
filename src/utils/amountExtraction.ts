@@ -97,7 +97,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
   const lines = ocrText.split('\n').filter(line => line.trim().length > 0);
   const normalizedLines = lines.map(line => normalizeDigits(line.toLowerCase()));
 
-  // Pre-pass: scan forward from any "total" header and pick the largest numeric value beneath it
+  // Pre-pass: scan from any "total" header and pick the largest numeric value on SAME line or beneath it
   const totalHeaderIndices = normalizedLines
     .map((l, i) => (containsTotalKeywordNormalized(l) ? i : -1))
     .filter(i => i >= 0);
@@ -105,7 +105,16 @@ export function extractAmount(ocrText: string): ExtractedAmount {
   if (totalHeaderIndices.length > 0) {
     let headerBest: { amount: number; index: number; currency: string } | null = null;
     totalHeaderIndices.forEach(idx => {
-      const end = Math.min(lines.length - 1, idx + 12); // look up to 12 lines below header
+      // Check SAME line first (for table structures where total is on same row)
+      const sameLineAmt = parseAmount(lines[idx]);
+      if (sameLineAmt !== null && sameLineAmt > 0 && sameLineAmt <= 1000000) {
+        if (!headerBest || sameLineAmt > headerBest.amount) {
+          headerBest = { amount: sameLineAmt, index: idx, currency: detectCurrency(lines[idx]) };
+        }
+      }
+      
+      // Then check lines below
+      const end = Math.min(lines.length - 1, idx + 12);
       for (let j = idx + 1; j <= end; j++) {
         const amt = parseAmount(lines[j]);
         if (amt !== null && amt > 0 && amt <= 1000000) {
