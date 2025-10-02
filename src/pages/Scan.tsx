@@ -4,13 +4,12 @@ import { Camera, Upload, ArrowLeft, Loader2, Sparkles, Settings } from 'lucide-r
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { CameraCapture } from '@/components/camera/CameraCapture';
 import { useVoucherStore } from '@/store/voucherStore';
 import { preprocessImage, compressImage } from '@/utils/imageProcessing';
-import { extractAmount, extractAmountWithAI } from '@/utils/amountExtraction';
+import { extractAmountWithAI } from '@/utils/amountExtraction';
 import { Voucher } from '@/types/voucher';
 import { toast } from 'sonner';
 
@@ -23,14 +22,20 @@ export default function Scan() {
   const [progress, setProgress] = useState(0);
   const [statusText, setStatusText] = useState('');
 
-  // AI Configuration
-  const [useAI, setUseAI] = useState(false);
-  const [aiApiKey, setAiApiKey] = useState(localStorage.getItem('openai_api_key') || '');
-  const [aiModel, setAiModel] = useState('gpt-4');
+  // AI is now mandatory - always enabled with Gemini
+  const [aiApiKey, setAiApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
+  const [aiModel, setAiModel] = useState(localStorage.getItem('gemini_model') || 'gemini-2.5-flash-lite');
 
   const { addVoucher } = useVoucherStore();
 
   const processImage = async (blob: Blob) => {
+    // Check if Gemini is configured before processing
+    if (!aiApiKey) {
+      toast.error('🤖 Gemini API Key required! Please configure AI settings first.');
+      setShowAISettings(true);
+      return;
+    }
+
     setIsProcessing(true);
     setProgress(10);
     setStatusText('معالجة الصورة / Processing image...');
@@ -41,81 +46,72 @@ export default function Scan() {
       const compressed = await compressImage(blob);
       const imageUrl = URL.createObjectURL(compressed);
 
-      // Preprocess for OCR
-      setProgress(40);
+      // Preprocess for OCR (minimal, mainly for AI OCR enhancement)
+      setProgress(30);
       setStatusText('تحسين الصورة / Enhancing image...');
       const preprocessed = await preprocessImage(blob);
 
-      // OCR with Tesseract
-      setProgress(60);
-      setStatusText('قراءة النص / Reading text...');
-      
+      // Quick OCR for AI enhancement (reduced priority)
+      setProgress(40);
+      setStatusText('قراءة نص أساسية / Basic text reading...');
       const ocrText = await performOCR(preprocessed);
 
-      // Extract amount with AI enhancement if enabled
-      setProgress(80);
-      if (useAI && aiApiKey) {
-        setStatusText('تحليل بالذكاء الاصطناعي / AI Analysis...');
-        const extracted = await extractAmountWithAI(ocrText, blob, {
-          apiKey: aiApiKey,
-          model: aiModel,
-          maxTokens: 1000
-        });
+      // Gemini AI-First Analysis
+      setProgress(50);
+      setStatusText('🤖 تحليل بـ Gemini / Gemini AI Analysis...');
 
-        // Show AI method used
-        const methodEmoji = {
-          'ai-vision': '👁️',
-          'ai-ocr': '🤖',
-          'hybrid': '🤝',
-          'traditional': '📋'
-        };
+      const extracted = await extractAmountWithAI(ocrText, blob, {
+        apiKey: aiApiKey,
+        model: aiModel,
+        maxTokens: 1000
+      });
 
-        toast.success(`${methodEmoji[extracted.method]} Amount extracted using ${extracted.method} method`, {
+      // Show Gemini method used with enhanced feedback
+      const methodEmoji = {
+        'ai-vision': '👁️ Gemini Vision',
+        'ai-ocr': '🧠 Gemini OCR+',
+        'hybrid': '🤝 Gemini Hybrid',
+        'traditional': '⚠️ Fallback'
+      };
+
+      if (extracted.method === 'traditional') {
+        // Check if it's a quota/rate limit issue
+        if (extracted.rawText?.includes('quota') || extracted.rawText?.includes('limit')) {
+          toast.error('💳 Gemini API Issue', {
+            description: 'Please check your Google AI quota or wait a moment and try again.'
+          });
+        } else {
+          toast.error(`${methodEmoji[extracted.method]} - Gemini analysis failed, using basic fallback`, {
+            description: `Result: ${extracted.amount} ${extracted.currency} - Consider checking your API key`
+          });
+        }
+      } else {
+        toast.success(`${methodEmoji[extracted.method]} - Successfully analyzed with Gemini`, {
           description: `${extracted.amount} ${extracted.currency} (${Math.round(extracted.confidence * 100)}% confidence)`
         });
-
-        if (extracted.aiAnalysis?.aiReasoning) {
-          console.log('AI Reasoning:', extracted.aiAnalysis.aiReasoning);
-        }
-
-        // Create voucher with AI metadata
-        const voucher: Voucher = {
-          id: Date.now().toString(),
-          amount: extracted.amount || 0,
-          currency: extracted.currency,
-          date: new Date().toISOString().split('T')[0],
-          description: `Scanned voucher (${extracted.method})`,
-          confidence: extracted.confidence,
-          imageUrl,
-          ocrText,
-          rawText: extracted.rawText,
-          method: extracted.method,
-          aiAnalysis: extracted.aiAnalysis,
-          createdAt: Date.now() // Fix: Add missing createdAt field
-        };
-
-        addVoucher(voucher);
-      } else {
-        setStatusText('استخراج المبلغ / Extracting amount...');
-        const extracted = extractAmount(ocrText);
-
-        // Create voucher with traditional method
-        const voucher: Voucher = {
-          id: Date.now().toString(),
-          amount: extracted.amount || 0,
-          currency: extracted.currency,
-          date: new Date().toISOString().split('T')[0],
-          description: 'Scanned voucher (traditional)',
-          confidence: extracted.confidence,
-          imageUrl,
-          ocrText,
-          rawText: extracted.rawText,
-          method: 'traditional',
-          createdAt: Date.now() // Fix: Add missing createdAt field
-        };
-
-        addVoucher(voucher);
       }
+
+      if (extracted.aiAnalysis?.aiReasoning) {
+        console.log('🤖 Gemini Reasoning:', extracted.aiAnalysis.aiReasoning);
+      }
+
+      // Create voucher with Gemini metadata
+      const voucher: Voucher = {
+        id: Date.now().toString(),
+        amount: extracted.amount || 0,
+        currency: extracted.currency,
+        date: new Date().toISOString().split('T')[0],
+        description: `Gemini-Scanned voucher (${extracted.method})`,
+        confidence: extracted.confidence,
+        imageUrl,
+        ocrText,
+        rawText: extracted.rawText,
+        method: extracted.method,
+        aiAnalysis: extracted.aiAnalysis,
+        createdAt: Date.now()
+      };
+
+      addVoucher(voucher);
 
       setProgress(100);
       setStatusText('مكتمل / Complete!');
@@ -124,14 +120,14 @@ export default function Scan() {
         navigate('/review', {
           state: {
             fromScan: true,
-            method: useAI ? 'ai-enhanced' : 'traditional'
+            method: 'gemini-powered'
           }
         });
       }, 500);
 
     } catch (error) {
-      console.error('Processing failed:', error);
-      toast.error('فشل في معالجة الصورة / Failed to process image');
+      console.error('Gemini Processing failed:', error);
+      toast.error('🤖 فشل في التحليل بـ Gemini / Gemini Analysis failed');
       setIsProcessing(false);
       setProgress(0);
       setStatusText('');
@@ -183,12 +179,19 @@ export default function Scan() {
   };
 
   const saveAISettings = () => {
-    if (aiApiKey) {
-      localStorage.setItem('openai_api_key', aiApiKey);
-      toast.success('AI settings saved');
+    if (!aiApiKey.trim()) {
+      toast.error('Please enter a valid Gemini API key');
+      return;
     }
+
+    localStorage.setItem('gemini_api_key', aiApiKey);
+    localStorage.setItem('gemini_model', aiModel);
+    toast.success('🤖 Gemini settings saved successfully!');
     setShowAISettings(false);
   };
+
+  // Force AI settings if no API key
+  const needsAISetup = !aiApiKey;
 
   if (showCamera) {
     return (
@@ -216,9 +219,12 @@ export default function Scan() {
             <ArrowLeft className="h-5 w-5" />
           </Button>
 
-          <h1 className="text-xl font-bold text-gray-900">
-            مسح الإيصال / Scan Receipt
-          </h1>
+          <div className="text-center">
+            <h1 className="text-xl font-bold text-gray-900">
+              🤖 مسح ذكي / AI Scan
+            </h1>
+            <p className="text-xs text-blue-600">Powered by Gemini 2.5 Flash Lite</p>
+          </div>
 
           <Button
             variant="ghost"
@@ -230,54 +236,78 @@ export default function Scan() {
           </Button>
         </div>
 
+        {/* AI Status Banner */}
+        <Card className={`p-4 mb-6 ${needsAISetup ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
+          <div className="flex items-center gap-3">
+            <Sparkles className={`h-5 w-5 ${needsAISetup ? 'text-red-600' : 'text-green-600'}`} />
+            <div className="flex-1">
+              <p className={`font-medium text-sm ${needsAISetup ? 'text-red-900' : 'text-green-900'}`}>
+                {needsAISetup ? '⚠️ Gemini Setup Required' : '✅ Gemini Ready'}
+              </p>
+              <p className={`text-xs ${needsAISetup ? 'text-red-700' : 'text-green-700'}`}>
+                {needsAISetup
+                  ? 'Configure Google AI API key for intelligent scanning'
+                  : `Using ${aiModel} for advanced analysis`
+                }
+              </p>
+            </div>
+            {needsAISetup && (
+              <Button
+                size="sm"
+                onClick={() => setShowAISettings(true)}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                Setup
+              </Button>
+            )}
+          </div>
+        </Card>
+
         {/* AI Settings Panel */}
-        {showAISettings && (
+        {(showAISettings || needsAISetup) && (
           <Card className="p-4 mb-6 border-blue-200">
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
-                  <Sparkles className="h-5 w-5 text-blue-600" />
-                  <Label htmlFor="ai-toggle">AI Enhancement</Label>
-                </div>
-                <Switch
-                  id="ai-toggle"
-                  checked={useAI}
-                  onCheckedChange={setUseAI}
-                />
+              <div className="flex items-center gap-2 mb-4">
+                <Sparkles className="h-5 w-5 text-blue-600" />
+                <h3 className="font-semibold text-blue-900">Gemini AI Configuration (Required)</h3>
               </div>
 
-              {useAI && (
-                <>
-                  <div className="space-y-2">
-                    <Label htmlFor="api-key">OpenAI API Key</Label>
-                    <Input
-                      id="api-key"
-                      type="password"
-                      placeholder="sk-..."
-                      value={aiApiKey}
-                      onChange={(e) => setAiApiKey(e.target.value)}
-                    />
-                  </div>
+              <div className="space-y-2">
+                <Label htmlFor="api-key">Google AI API Key *</Label>
+                <Input
+                  id="api-key"
+                  type="password"
+                  placeholder="AIza..."
+                  value={aiApiKey}
+                  onChange={(e) => setAiApiKey(e.target.value)}
+                  className={!aiApiKey ? 'border-red-300' : ''}
+                />
+                <p className="text-xs text-gray-600">
+                  Get your API key from <a href="https://makersuite.google.com/app/apikey" target="_blank" className="text-blue-600 underline">Google AI Studio</a>
+                </p>
+              </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="model">Model</Label>
-                    <select
-                      id="model"
-                      value={aiModel}
-                      onChange={(e) => setAiModel(e.target.value)}
-                      className="w-full p-2 border rounded-md"
-                    >
-                      <option value="gpt-4">GPT-4 (Recommended)</option>
-                      <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                      <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-                    </select>
-                  </div>
+              <div className="space-y-2">
+                <Label htmlFor="model">Gemini Model</Label>
+                <select
+                  id="model"
+                  value={aiModel}
+                  onChange={(e) => setAiModel(e.target.value)}
+                  className="w-full p-2 border rounded-md"
+                >
+                  <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (Best for Arabic)</option>
+                  <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                  <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                  <option value="gemini-1.0-pro">Gemini 1.0 Pro</option>
+                </select>
+                <p className="text-xs text-gray-600">
+                  Gemini 2.5 Flash Lite is optimized for fast, accurate Arabic text analysis
+                </p>
+              </div>
 
-                  <Button onClick={saveAISettings} className="w-full">
-                    Save AI Settings
-                  </Button>
-                </>
-              )}
+              <Button onClick={saveAISettings} className="w-full">
+                💾 Save Gemini Configuration
+              </Button>
             </div>
           </Card>
         )}
@@ -309,12 +339,10 @@ export default function Scan() {
                   <p className="text-sm text-gray-500">
                     استخدم الكاميرا لمسح الإيصال / Use camera to scan receipt
                   </p>
-                  {useAI && (
-                    <div className="flex items-center justify-center mt-2 text-blue-600">
-                      <Sparkles className="h-4 w-4 mr-1" />
-                      <span className="text-xs">AI Enhanced</span>
-                    </div>
-                  )}
+                  <div className="flex items-center justify-center mt-2 text-blue-600">
+                    <Sparkles className="h-4 w-4 mr-1" />
+                    <span className="text-xs font-medium">Gemini 2.5 Flash Lite</span>
+                  </div>
                 </div>
                 <Button
                   onClick={() => setShowCamera(true)}
@@ -336,12 +364,6 @@ export default function Scan() {
                   <p className="text-sm text-gray-500">
                     اختر صورة من الاستوديو / Choose image from gallery
                   </p>
-                  {useAI && (
-                    <div className="flex items-center justify-center mt-2 text-blue-600">
-                      <Sparkles className="h-4 w-4 mr-1" />
-                      <span className="text-xs">AI Enhanced</span>
-                    </div>
-                  )}
                 </div>
                 <Button
                   onClick={() => fileInputRef.current?.click()}
@@ -351,6 +373,33 @@ export default function Scan() {
                 >
                   اختيار صورة / Choose Image
                 </Button>
+              </div>
+            </Card>
+
+            {/* AI Benefits Card */}
+            <Card className="p-4 bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200">
+              <div className="text-center space-y-2">
+                <h4 className="font-semibold text-purple-900 text-sm">
+                  🚀 Gemini-Powered Benefits
+                </h4>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="flex items-center gap-1 text-purple-700">
+                    <span>⚡</span>
+                    <span>Flash Lite Speed</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-purple-700">
+                    <span>🇸🇦</span>
+                    <span>Arabic Expert</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-purple-700">
+                    <span>📊</span>
+                    <span>Table Recognition</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-purple-700">
+                    <span>💰</span>
+                    <span>Cost Effective</span>
+                  </div>
+                </div>
               </div>
             </Card>
           </div>

@@ -114,6 +114,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
       currency: 'EUR',
       confidence: 0,
       rawText: ocrText,
+      method: 'traditional'
     };
   }
 
@@ -158,6 +159,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
           confidence: 0.99,
           rawText: totalLine,
           detectedRows: lines,
+          method: 'traditional'
         };
       }
     }
@@ -177,6 +179,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
           confidence: 0.98,
           rawText: totalLine,
           detectedRows: lines,
+          method: 'traditional'
         };
       }
     }
@@ -196,6 +199,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
           confidence: 0.97,
           rawText: totalLine,
           detectedRows: lines,
+          method: 'traditional'
         };
       }
     }
@@ -219,6 +223,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
               confidence: 0.96,
               rawText: totalLine,
               detectedRows: lines,
+              method: 'traditional'
             };
           }
         }
@@ -374,6 +379,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
             confidence: 0.75, // Lower confidence due to poor OCR
             rawText: lines.find(line => parseAmount(line) === maxAmount) || bestCandidate.line,
             detectedRows: lines,
+            method: 'traditional'
           };
         }
 
@@ -386,6 +392,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
             confidence: 0.70, // Lower confidence for calculated total
             rawText: `Calculated from: ${allAmounts.join(' + ')}`,
             detectedRows: lines,
+            method: 'traditional'
           };
         }
       }
@@ -397,6 +404,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
       confidence: bestCandidate.confidence,
       rawText: bestCandidate.line,
       detectedRows: lines,
+      method: 'traditional'
     };
   }
 
@@ -411,6 +419,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
         confidence: 0.4, // Low confidence fallback
         rawText: lastLines[i],
         detectedRows: lines,
+        method: 'traditional'
       };
     }
   }
@@ -422,6 +431,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
     confidence: 0,
     rawText: ocrText,
     detectedRows: lines,
+    method: 'traditional'
   };
 }
 
@@ -443,66 +453,85 @@ export function extractTableAmounts(ocrText: string): number[] {
 }
 
 /**
- * Enhanced AI-powered amount extraction
+ * AI-Only amount extraction - no traditional OCR fallback
  */
 export async function extractAmountWithAI(
   ocrText: string,
   imageBlob?: Blob,
   aiConfig?: { apiKey: string; model?: string; maxTokens?: number }
 ): Promise<ExtractedAmount> {
-  console.log('🚀 Starting AI-enhanced extraction...');
+  console.log('🤖 Starting AI-only extraction...');
 
-  // Get traditional OCR result first
-  const traditionalResult = extractAmount(ocrText);
-  console.log('📊 Traditional OCR result:', traditionalResult);
-
-  // If traditional method has high confidence, return it
-  if (traditionalResult.confidence > 0.9) {
-    console.log('✅ Traditional method has high confidence, using it');
-    return { ...traditionalResult, method: 'traditional' };
+  // If no AI config, return failure - no fallback allowed
+  if (!aiConfig?.apiKey) {
+    console.log('❌ No AI configuration provided - AI is required');
+    return {
+      amount: null,
+      currency: 'EGP',
+      confidence: 0,
+      rawText: 'AI configuration required - no fallback available',
+      method: 'traditional'
+    };
   }
 
-  // Try AI enhancement if config provided
-  if (aiConfig?.apiKey) {
+  const aiService = new AIVoucherService({
+    apiKey: aiConfig.apiKey,
+    model: aiConfig.model || 'gemini-2.5-flash-lite',
+    maxTokens: aiConfig.maxTokens || 1500
+  });
+
+  console.log('🎯 Attempting AI vision analysis first...');
+
+  // Primary: AI Vision Analysis (if image available)
+  if (imageBlob) {
     try {
-      const aiService = new AIVoucherService({
-        apiKey: aiConfig.apiKey,
-        model: aiConfig.model || 'gpt-4',
-        maxTokens: aiConfig.maxTokens || 1000
-      });
+      const visionResult = await aiService.analyzeVoucherImage(imageBlob);
 
-      // Use AI smart analysis
-      const aiResult = await aiService.smartAnalyze(imageBlob!, ocrText);
-
-      if (aiResult.amount && aiResult.confidence > traditionalResult.confidence) {
-        console.log('🤖 AI analysis found better result');
+      if (visionResult.amount && visionResult.confidence > 0.1) {
+        console.log('✅ AI Vision successful:', visionResult.amount);
         return {
-          amount: aiResult.amount,
-          currency: aiResult.currency,
-          confidence: Math.min(aiResult.confidence, 0.95), // Cap AI confidence
-          rawText: aiResult.aiReasoning || 'AI analysis',
-          detectedRows: traditionalResult.detectedRows,
-          aiAnalysis: aiResult,
-          method: imageBlob ? 'ai-vision' : 'ai-ocr'
-        };
-      }
-
-      // Hybrid approach: If AI and traditional agree, boost confidence
-      if (aiResult.amount && Math.abs(aiResult.amount - (traditionalResult.amount || 0)) < traditionalResult.amount! * 0.1) {
-        console.log('🤝 AI and traditional methods agree, boosting confidence');
-        return {
-          ...traditionalResult,
-          confidence: Math.min(traditionalResult.confidence + 0.2, 0.98),
-          aiAnalysis: aiResult,
-          method: 'hybrid'
+          amount: visionResult.amount,
+          currency: visionResult.currency,
+          confidence: Math.min(visionResult.confidence * 1.2, 0.99),
+          rawText: visionResult.aiReasoning || 'AI Vision analysis',
+          aiAnalysis: visionResult,
+          method: 'ai-vision'
         };
       }
     } catch (error) {
-      console.log('⚠️ AI analysis failed, falling back to traditional method:', error);
+      console.log('⚠️ AI Vision failed, trying OCR enhancement...', error);
     }
   }
 
-  // Fallback to traditional result
-  console.log('📋 Using traditional OCR result');
-  return { ...traditionalResult, method: 'traditional' };
+  // Secondary: AI-Enhanced OCR Analysis
+  if (ocrText?.trim()) {
+    try {
+      console.log('🔍 Attempting AI OCR enhancement...');
+      const ocrResult = await aiService.enhanceOCRWithAI(ocrText);
+
+      if (ocrResult.amount && ocrResult.confidence > 0.1) {
+        console.log('✅ AI OCR enhancement successful:', ocrResult.amount);
+        return {
+          amount: ocrResult.amount,
+          currency: ocrResult.currency,
+          confidence: Math.min(ocrResult.confidence * 1.1, 0.95),
+          rawText: ocrResult.aiReasoning || 'AI OCR enhancement',
+          aiAnalysis: ocrResult,
+          method: 'ai-ocr'
+        };
+      }
+    } catch (error) {
+      console.log('⚠️ AI OCR enhancement failed...', error);
+    }
+  }
+
+  // NO TRADITIONAL FALLBACK - AI-only system
+  console.log('❌ All AI methods failed - no traditional fallback allowed');
+  return {
+    amount: null,
+    currency: 'EGP',
+    confidence: 0,
+    rawText: 'AI analysis failed - no traditional OCR fallback available',
+    method: 'traditional' // Keep for error identification
+  };
 }
