@@ -103,12 +103,24 @@ export function extractAmount(ocrText: string): ExtractedAmount {
     .filter(i => i >= 0);
 
   if (totalHeaderIndices.length > 0) {
+    // Helper scoped to totals context: pick the RIGHTMOST number on a line
+    // and merge spaced thousands like "50 300" -> "50300" (common in totals)
+    const rightmostNumberForTotal = (raw: string): number | null => {
+      const norm = normalizeDigits(raw).replace(/[\u200E\u200F\u202A-\u202E\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g, '');
+      const merged = norm.replace(/(\d{1,3})\s(\d{3})(?!\d)/g, '$1$2');
+      const ms = merged.match(/\d+(?:[.,]\d+)?/g);
+      if (!ms) return null;
+      const last = ms[ms.length - 1];
+      const num = parseFloat(last.replace(',', '.'));
+      return isNaN(num) ? null : num;
+    };
+
     let headerBest: { amount: number; index: number; currency: string } | null = null;
     totalHeaderIndices.forEach(idx => {
       // Check SAME line first (for table structures where total is on same row)
-      const sameLineAmt = parseAmount(lines[idx]);
+      const sameLineAmt = rightmostNumberForTotal(lines[idx]);
       if (sameLineAmt !== null && sameLineAmt > 0 && sameLineAmt <= 1000000) {
-        if (!headerBest || sameLineAmt > headerBest.amount) {
+        if (!headerBest || sameLineAmt > headerBest.amount || (sameLineAmt === headerBest.amount && idx > headerBest.index)) {
           headerBest = { amount: sameLineAmt, index: idx, currency: detectCurrency(lines[idx]) };
         }
       }
@@ -116,7 +128,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
       // Then check lines below
       const end = Math.min(lines.length - 1, idx + 12);
       for (let j = idx + 1; j <= end; j++) {
-        const amt = parseAmount(lines[j]);
+        const amt = rightmostNumberForTotal(lines[j]);
         if (amt !== null && amt > 0 && amt <= 1000000) {
           if (!headerBest || amt > headerBest.amount || (amt === headerBest.amount && j > headerBest.index)) {
             headerBest = { amount: amt, index: j, currency: detectCurrency(lines[j]) };
