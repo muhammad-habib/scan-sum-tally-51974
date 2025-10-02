@@ -33,53 +33,68 @@ export function parseAmount(text: string): number | null {
   let normalized = normalizeDigits(text);
 
   // Remove common Arabic/English words that appear with numbers but aren't part of the number
-  // Keep these separate from the number itself
   const cleanText = normalized
     .replace(/\b(ألف|الف|الاف|ألاف|مليون|الملايين|thousand|million|k|m)\b/gi, ' ')
     .replace(/\b(جنيه|دولار|يورو|ريال|درهم|pound|dollar|euro|egp|usd|eur|cve)\b/gi, ' ')
     .replace(/[€$£¥₹]/g, ' ');
 
-  // Remove ALL other non-numeric characters except digits, spaces, commas, dots
-  let cleaned = cleanText.replace(/[^\d\s.,]/g, ' ');
+  // Remove ALL other non-numeric characters except digits, spaces, commas, dots, pipes, dashes
+  // Keep pipes and dashes as they often separate table columns
+  let cleaned = cleanText.replace(/[^\d\s.,|\-]/g, ' ');
 
-  // Normalize whitespace
-  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  // Split by common table separators (pipes, multiple spaces, dashes between numbers)
+  // This prevents merging numbers from different table columns
+  const parts = cleaned.split(/\s*[\|]\s*|\s{3,}|\s-\s/);
 
-  // Handle space-separated thousands: "50 300" -> "50300"
-  // Match patterns like: digit(s) space digit(3) word-boundary
-  cleaned = cleaned.replace(/(\d{1,3})\s+(\d{3})\b/g, '$1$2');
+  let allNumbers: number[] = [];
+
+  parts.forEach(part => {
+    // Clean up this part
+    let partCleaned = part.replace(/\s+/g, ' ').trim();
+    
+    // Only merge spaces for thousands format: "50 300" but NOT "20 380 7600"
+    // Look for pattern: 1-3 digits, space, exactly 3 digits, word boundary
+    // Do this ONLY if there's exactly one space followed by 3 digits
+    const hasThousandsSeparator = /^\d{1,3}\s\d{3}$/.test(partCleaned);
+    
+    if (hasThousandsSeparator) {
+      // This looks like "50 300" - merge it
+      partCleaned = partCleaned.replace(/\s/g, '');
+    } else {
+      // This might be "20 380 7600" - extract each number separately
+      const individualNumbers = partCleaned.match(/\d+(?:[.,]\d+)?/g);
+      if (individualNumbers) {
+        individualNumbers.forEach(numStr => {
+          const num = parseFloat(numStr.replace(',', '.'));
+          if (!isNaN(num) && num > 0) {
+            allNumbers.push(num);
+          }
+        });
+        return; // Skip the rest for this part
+      }
+    }
+    
+    // Extract numbers from this part
+    const matches = partCleaned.match(/\d+(?:[.,]\d+)?/g);
+    if (matches) {
+      matches.forEach(m => {
+        const num = parseFloat(m.replace(',', '.'));
+        if (!isNaN(num) && num > 0) {
+          allNumbers.push(num);
+        }
+      });
+    }
+  });
   
-  // Handle additional space-separated patterns: "7 600" -> "7600" 
-  cleaned = cleaned.replace(/(\d{1,2})\s+(\d{3})\b/g, '$1$2');
-
-  // Remove any remaining spaces between digits
-  cleaned = cleaned.replace(/(\d)\s+(\d)/g, '$1$2');
-
-  // Extract all number sequences (with optional decimal)
-  const matches = cleaned.match(/\d+(?:[.,]\d+)?/g);
-  if (!matches || matches.length === 0) {
+  if (allNumbers.length === 0) {
     console.log(`parseAmount("${original}") -> NO NUMBERS FOUND`);
     return null;
   }
 
-  // Parse and validate all numbers
-  const numbers = matches
-    .map(m => {
-      // Replace comma with dot for decimal parsing
-      const normalized = m.replace(',', '.');
-      return parseFloat(normalized);
-    })
-    .filter(n => !isNaN(n) && n > 0);
-  
-  if (numbers.length === 0) {
-    console.log(`parseAmount("${original}") -> NO VALID NUMBERS`);
-    return null;
-  }
-
   // Return the largest number (totals are typically the largest on receipts)
-  const maxNumber = Math.max(...numbers);
+  const maxNumber = Math.max(...allNumbers);
   
-  console.log(`parseAmount("${original}") -> numbers: [${numbers.join(', ')}] -> MAX: ${maxNumber}`);
+  console.log(`parseAmount("${original}") -> numbers: [${allNumbers.join(', ')}] -> MAX: ${maxNumber}`);
   
   return maxNumber;
 }
