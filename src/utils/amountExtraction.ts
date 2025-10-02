@@ -95,7 +95,9 @@ export function extractAmount(ocrText: string): ExtractedAmount {
   }
 
   const lines = ocrText.split('\n').filter(line => line.trim().length > 0);
-  const normalizedLines = lines.map(line => normalizeDigits(line.toLowerCase()));
+  const normalizedLines = lines.map(line =>
+    normalizeDigits(line.toLowerCase()).replace(/[\u200E\u200F\u202A-\u202E\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g, '')
+  );
 
   // Pre-pass: scan from any "total" header and pick the largest numeric value on SAME line or beneath it
   const totalHeaderIndices = normalizedLines
@@ -173,8 +175,21 @@ export function extractAmount(ocrText: string): ExtractedAmount {
       return; // Skip this line
     }
 
-    // Try to parse amount from this line
-    const amount = parseAmount(line);
+    // Row-aware amount extraction: prefer the RIGHTMOST large number in the line
+    let amount: number | null = null;
+    const numberMatches = normalizeDigits(line).match(/\d+(?:[.,]\d+)?/g);
+    if (numberMatches && numberMatches.length >= 2) {
+      for (let k = numberMatches.length - 1; k >= 0; k--) {
+        const cand = parseFloat(numberMatches[k].replace(',', '.'));
+        if (!isNaN(cand) && cand >= 1000 && cand <= 1000000) { // likely a line total
+          amount = cand;
+          break;
+        }
+      }
+    }
+    if (amount === null) {
+      amount = parseAmount(line);
+    }
     if (amount === null || amount === 0) {
       if (line.trim().length > 0) {
         console.log(`Line ${index}: "${line.substring(0, 40)}..." -> NO AMOUNT`);
