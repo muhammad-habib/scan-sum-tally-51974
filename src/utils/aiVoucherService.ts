@@ -76,40 +76,44 @@ class AIVoucherService {
         }
       };
 
-      const prompt = `You are analyzing an Arabic fruit/vegetable receipt image. Find the TOTAL amount.
+      const prompt = `Analyze this receipt/voucher image and extract the TOTAL amount.
 
-VISUAL ANALYSIS REQUIRED - Don't rely on text recognition:
+UNIVERSAL RECEIPT ANALYSIS - Handle all types of receipts:
 
-1. Look for a TABLE with these Arabic headers:
-   - نوع الصنف (Item Type)
-   - الحجم (Size) 
-   - العدد (Quantity)
-   - السعر (Price)
-   - الإجمالي (Total)
+Look for TOTAL indicators in multiple languages:
+- Arabic: "مجموع" (total), "الإجمالي" (total), "المبلغ" (amount), "الرصيد المستحق" (balance due)
+- English: "Total", "Amount", "Sum", "Balance", "Due"
+- Currency formats: SAR, USD ($), EGP, EUR, SR, etc.
 
-2. Individual rows show fruits:
-   - برتقال (Orange)
-   - جوافة (Guava) 
-   - مانجا (Mango)
-   - فراولة (Strawberry)
+VISUAL ANALYSIS STEPS:
+1. Scan the ENTIRE receipt for the final total amount
+2. Look for amounts in the BOTTOM section of the receipt
+3. Check for table structures with totals at the bottom
+4. Find the LARGEST monetary amount that represents the final total
+5. Look for patterns like:
+   - "13,500.00 SAR"
+   - "121.90 $"
+   - "الرصيد المستحق: XXXX"
+   - "Total: XXXX"
 
-3. BOTTOM ROW (usually highlighted/colored):
-   - Contains "الإجمالي" (Total)
-   - Shows a large 6-digit number followed by "ألف"
-   - This is the TOTAL AMOUNT in thousands
+IGNORE:
+- Individual item prices
+- Tax registration numbers
+- Phone numbers
+- Dates
 
-IGNORE OCR ERRORS: Look directly at the visual numbers in the bottom row.
-
-Expected pattern in bottom row: الإجمالي [large number] ألف
-
-The individual items sum to about 131,000, so look for that number.
+For Arabic invoices specifically:
+- Look for "الرصيد المستحق" (balance due)
+- Find amounts with SAR currency
+- Check the bottom rows of tables
+- Numbers in format "XX,XXX.XX SAR"
 
 Return ONLY this JSON:
 {
-  "amount": <the 6-digit number you see in the bottom row>,
-  "currency": "EGP",
+  "amount": <the total amount as a number>,
+  "currency": "<detected currency - USD, EGP, SAR, etc>",
   "confidence": 0.95,
-  "aiReasoning": "Visually identified the total amount in the highlighted الإجمالي row"
+  "aiReasoning": "Found total amount [X] [currency] in [location/context]"
 }`;
 
       const result = await model.generateContent([prompt, imagePart]);
@@ -131,6 +135,23 @@ Return ONLY this JSON:
         // Clean the response to ensure it's valid JSON
         const cleanedContent = content.replace(/```json\s*|\s*```/g, '').trim();
         aiAnalysis = JSON.parse(cleanedContent) as AIVoucherAnalysis;
+
+        // Normalize currency code to valid ISO format
+        const normalizeCurrency = (currency: string): string => {
+          const currencyMap: Record<string, string> = {
+            'SR': 'SAR',  // Saudi Riyal
+            'EG': 'EGP',  // Egyptian Pound
+            'AE': 'AED',  // UAE Dirham
+            'US': 'USD',  // US Dollar
+            'EU': 'EUR',  // Euro
+          };
+
+          const normalized = currency?.toUpperCase() || 'SAR';
+          return currencyMap[normalized] || normalized;
+        };
+
+        // Normalize the currency code
+        aiAnalysis.currency = normalizeCurrency(aiAnalysis.currency);
 
         // Validate the response
         if (typeof aiAnalysis.amount === 'number' && aiAnalysis.amount > 0) {
@@ -231,24 +252,38 @@ Return ONLY this JSON:
         }
       });
 
-      const prompt = `Extract the total amount from this Arabic receipt OCR text.
+      const prompt = `Extract the total amount from this receipt OCR text.
 
 OCR Text:
 ${ocrText.substring(0, 1500)}
 
+UNIVERSAL RECEIPT ANALYSIS - Handle all receipt types:
+
+Look for TOTAL indicators in multiple languages:
+- Arabic: "مجموع" (total), "الإجمالي" (total), "المبلغ" (amount), "الرصيد المستحق" (balance due)
+- English: "Total", "Amount", "Sum", "Balance", "Due"
+- Mixed format receipts with both languages
+
 Instructions:
-1. Look for Arabic keyword "الإجمالي" (total) - this marks the total row
-2. Find numbers followed by "ألف" (thousands) in that row
-3. The pattern "131000 ألف" means 131,000
-4. Ignore individual line items, registration numbers, and contact info
-5. Focus only on the final total amount
+1. Find the FINAL TOTAL amount (not individual item prices)
+2. Look for currency formats: SAR, USD ($), EGP, EUR, etc.
+3. Patterns to find:
+   - "13,500.00 SAR" (amount with SAR currency)
+   - "121.90 $" (amount followed by currency)
+   - "$121.90" (currency followed by amount)
+   - "الرصيد المستحق: 13500" (balance due in Arabic)
+   - "Total: 121.90"
+   - "مجموع: 121.90"
+4. Ignore individual line items, registration numbers, dates, phone numbers
+5. Focus on the largest amount that represents the final total
+6. For Arabic invoices, look specifically for "الرصيد المستحق" followed by an amount
 
 Return ONLY this JSON:
 {
   "amount": <the total number>,
-  "currency": "EGP",
+  "currency": "<detected currency - SAR, USD, EGP, etc>",
   "confidence": <0.0-1.0>,
-  "aiReasoning": "Found الإجمالي with [number] ألف"
+  "aiReasoning": "Found total [amount] [currency] in [context]"
 }`;
 
       const result = await model.generateContent(prompt);

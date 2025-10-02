@@ -69,28 +69,6 @@ export function TotalsDisplay() {
           ))}
         </div>
       )}
-
-      {/* Actions */}
-      <div className="flex gap-3">
-        <Button
-          onClick={handleCopy}
-          className="flex-1 gap-2"
-          variant="default"
-          disabled={!totals.singleCurrency || totals.overallTotal === null}
-        >
-          <Copy className="h-4 w-4" />
-          نسخ / Copy Total
-        </Button>
-        
-        <Button
-          onClick={handleExport}
-          className="flex-1 gap-2"
-          variant="outline"
-        >
-          <Download className="h-4 w-4" />
-          تصدير CSV / Export CSV
-        </Button>
-      </div>
     </Card>
   );
 }

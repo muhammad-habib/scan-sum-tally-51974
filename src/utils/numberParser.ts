@@ -71,34 +71,13 @@ export function parseAmount(text: string): number | null {
           // try to split it intelligently (common OCR error in Arabic receipts)
           if (num > 100000) {
             const numStr = num.toString();
-
-            // Don't split dates (8-digit numbers starting with 20xx)
-            const isDate = /^20\d{6}$/.test(numStr);
-            if (isDate) {
-              allNumbers.push(num);
-              return;
-            }
-
-            // Don't split phone numbers or IDs (more than 8 digits)
-            if (numStr.length > 8) {
-              // These are likely phone numbers, don't add them at all
-              return;
-            }
-
             // Try to split patterns like "3807600" into "380" + "7600"
-            if (numStr.length >= 6 && numStr.length <= 8) {
+            if (numStr.length >= 6) {
               const possibleSplit1 = parseInt(numStr.substring(0, 3));
               const possibleSplit2 = parseInt(numStr.substring(3));
 
-              // Only split if:
-              // 1. First part looks like a unit price (100-999)
-              // 2. Second part looks like a line total (1000-99999)
-              // 3. We're processing a table row (contains Arabic product names)
-              const hasArabicProduct = /[برتقال|فراولة|مانجو|جوافة]/.test(original);
-
-              if (possibleSplit1 >= 100 && possibleSplit1 <= 999 &&
-                  possibleSplit2 >= 1000 && possibleSplit2 <= 99999 &&
-                  hasArabicProduct) {
+              // If the split makes sense (first part is typical unit price 100-999)
+              if (possibleSplit1 >= 100 && possibleSplit1 <= 999 && possibleSplit2 >= 1000) {
                 console.log(`OCR correction: split ${num} into ${possibleSplit1} + ${possibleSplit2}`);
                 allNumbers.push(possibleSplit1);
                 allNumbers.push(possibleSplit2);
@@ -180,8 +159,8 @@ export function detectCurrency(text: string): string {
     { pattern: /£|GBP|pound/i, code: 'GBP' },
     // Cape Verde Escudo
     { pattern: /CVE|escudo/i, code: 'CVE' },
-    // Saudi Riyal
-    { pattern: /SAR|ريال|ر\.س/i, code: 'SAR' },
+    // Saudi Riyal - include both SAR and SR (common abbreviation)
+    { pattern: /SAR|SR|ريال|ر\.س/i, code: 'SAR' },
     // UAE Dirham
     { pattern: /AED|درهم|د\.إ/i, code: 'AED' },
   ];

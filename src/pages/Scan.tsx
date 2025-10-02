@@ -223,7 +223,6 @@ export default function Scan() {
             <h1 className="text-xl font-bold text-gray-900">
               🤖 مسح ذكي / AI Scan
             </h1>
-            <p className="text-xs text-blue-600">Powered by Gemini 2.5 Flash Lite</p>
           </div>
 
           <Button
@@ -235,33 +234,6 @@ export default function Scan() {
             <Settings className="h-5 w-5" />
           </Button>
         </div>
-
-        {/* AI Status Banner */}
-        <Card className={`p-4 mb-6 ${needsAISetup ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
-          <div className="flex items-center gap-3">
-            <Sparkles className={`h-5 w-5 ${needsAISetup ? 'text-red-600' : 'text-green-600'}`} />
-            <div className="flex-1">
-              <p className={`font-medium text-sm ${needsAISetup ? 'text-red-900' : 'text-green-900'}`}>
-                {needsAISetup ? '⚠️ Gemini Setup Required' : '✅ Gemini Ready'}
-              </p>
-              <p className={`text-xs ${needsAISetup ? 'text-red-700' : 'text-green-700'}`}>
-                {needsAISetup
-                  ? 'Configure Google AI API key for intelligent scanning'
-                  : `Using ${aiModel} for advanced analysis`
-                }
-              </p>
-            </div>
-            {needsAISetup && (
-              <Button
-                size="sm"
-                onClick={() => setShowAISettings(true)}
-                className="bg-red-600 hover:bg-red-700"
-              >
-                Setup
-              </Button>
-            )}
-          </div>
-        </Card>
 
         {/* AI Settings Panel */}
         {(showAISettings || needsAISetup) && (
@@ -339,10 +311,6 @@ export default function Scan() {
                   <p className="text-sm text-gray-500">
                     استخدم الكاميرا لمسح الإيصال / Use camera to scan receipt
                   </p>
-                  <div className="flex items-center justify-center mt-2 text-blue-600">
-                    <Sparkles className="h-4 w-4 mr-1" />
-                    <span className="text-xs font-medium">Gemini 2.5 Flash Lite</span>
-                  </div>
                 </div>
                 <Button
                   onClick={() => setShowCamera(true)}
@@ -376,32 +344,6 @@ export default function Scan() {
               </div>
             </Card>
 
-            {/* AI Benefits Card */}
-            <Card className="p-4 bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200">
-              <div className="text-center space-y-2">
-                <h4 className="font-semibold text-purple-900 text-sm">
-                  🚀 Gemini-Powered Benefits
-                </h4>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="flex items-center gap-1 text-purple-700">
-                    <span>⚡</span>
-                    <span>Flash Lite Speed</span>
-                  </div>
-                  <div className="flex items-center gap-1 text-purple-700">
-                    <span>🇸🇦</span>
-                    <span>Arabic Expert</span>
-                  </div>
-                  <div className="flex items-center gap-1 text-purple-700">
-                    <span>📊</span>
-                    <span>Table Recognition</span>
-                  </div>
-                  <div className="flex items-center gap-1 text-purple-700">
-                    <span>💰</span>
-                    <span>Cost Effective</span>
-                  </div>
-                </div>
-              </div>
-            </Card>
           </div>
         )}
 

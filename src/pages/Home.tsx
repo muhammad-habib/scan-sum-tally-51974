@@ -103,39 +103,6 @@ export default function Home() {
               </Button>
             </div>
           )}
-
-          {/* Features */}
-          <div className="grid md:grid-cols-3 gap-6 pt-8">
-            <div className="text-center space-y-2">
-              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto">
-                <Camera className="h-6 w-6 text-primary" />
-              </div>
-              <h3 className="font-semibold">مسح سريع / Quick Scan</h3>
-              <p className="text-sm text-muted-foreground">
-                استخدم الكاميرا لمسح الفواتير
-              </p>
-            </div>
-            
-            <div className="text-center space-y-2">
-              <div className="w-12 h-12 rounded-full bg-success/10 flex items-center justify-center mx-auto">
-                <FileText className="h-6 w-6 text-success" />
-              </div>
-              <h3 className="font-semibold">دقة عالية / High Accuracy</h3>
-              <p className="text-sm text-muted-foreground">
-                استخراج تلقائي للمبالغ
-              </p>
-            </div>
-            
-            <div className="text-center space-y-2">
-              <div className="w-12 h-12 rounded-full bg-accent/10 flex items-center justify-center mx-auto">
-                <Trash2 className="h-6 w-6 text-accent" />
-              </div>
-              <h3 className="font-semibold">بدون إنترنت / Offline</h3>
-              <p className="text-sm text-muted-foreground">
-                يعمل بدون اتصال بالإنترنت
-              </p>
-            </div>
-          </div>
         </div>
       </div>
     </div>
