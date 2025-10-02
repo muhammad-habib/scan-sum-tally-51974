@@ -26,10 +26,16 @@ const TOTAL_KEYWORDS = [
   'total', 'montant', 'somme', 'total général',
 ];
 
-// Keywords to ignore (VAT, tax, etc. unless combined with total)
+// Keywords to ignore (VAT, tax, registration numbers, etc.)
 const IGNORE_KEYWORDS = [
   'vat', 'tax', 'مضافة', 'ضريبة', 'steuer', 'imposto',
   'service', 'خدمة', 'bedienung',
+  // Registration/ID numbers
+  'registration', 'رقم التسجيل', 'التسجيل', 'تسجيل', 'ضريبي',
+  'id:', 'رقم:', 'number:', 'no:', 'invoice no', 'رقم الفاتورة',
+  // Contact info
+  'phone', 'tel', 'email', 'هاتف', 'تليفون', 'بريد',
+  'تاريخ', 'date', 'datum',
 ];
 
 /**
@@ -93,7 +99,7 @@ export function extractAmount(ocrText: string): ExtractedAmount {
     const hasTotalKeyword = TOTAL_KEYWORDS.some(kw => normalizedLine.includes(kw));
     
     if (hasIgnoreKeyword && !hasTotalKeyword) {
-      console.log(`Line ${index}: SKIPPED (ignore keyword without total)`);
+      console.log(`Line ${index}: SKIPPED (ignore keyword: registration/tax/contact)`);
       return; // Skip this line
     }
 
@@ -103,6 +109,13 @@ export function extractAmount(ocrText: string): ExtractedAmount {
       if (line.trim().length > 0) {
         console.log(`Line ${index}: "${line.substring(0, 40)}..." -> NO AMOUNT`);
       }
+      return;
+    }
+
+    // Filter out unrealistic amounts (likely registration numbers, phone numbers, dates)
+    // Registration numbers are often 5-6 digits, totals are usually different ranges
+    if (amount > 1000000) {
+      console.log(`Line ${index}: SKIPPED (amount too large - likely phone/ID: ${amount})`);
       return;
     }
 
