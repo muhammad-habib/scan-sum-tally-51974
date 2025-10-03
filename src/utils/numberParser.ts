@@ -149,20 +149,20 @@ export function formatCurrency(amount: number, currency: string = 'EUR'): string
  */
 export function detectCurrency(text: string): string {
   const currencyPatterns = [
-    // Egyptian Pound - should be checked first for Arabic text
-    { pattern: /EGP|جنيه|جنية|ج\.م|LE/i, code: 'EGP' },
+    // Egyptian Pound - only explicit codes/symbols
+    { pattern: /EGP|ج\.م|LE/i, code: 'EGP' },
     // European currencies
     { pattern: /€|EUR|euro/i, code: 'EUR' },
     // US Dollar
-    { pattern: /\$|USD|dollar|دولار/i, code: 'USD' },
+    { pattern: /\$|USD|dollar/i, code: 'USD' },
     // British Pound
     { pattern: /£|GBP|pound/i, code: 'GBP' },
     // Cape Verde Escudo
     { pattern: /CVE|escudo/i, code: 'CVE' },
-    // Saudi Riyal - include both SAR and SR (common abbreviation)
-    { pattern: /SAR|SR|ريال|ر\.س/i, code: 'SAR' },
-    // UAE Dirham
-    { pattern: /AED|درهم|د\.إ/i, code: 'AED' },
+    // Saudi Riyal - only explicit codes, not Arabic words
+    { pattern: /SAR|SR|ر\.س/i, code: 'SAR' },
+    // UAE Dirham - only explicit codes
+    { pattern: /AED|د\.إ/i, code: 'AED' },
   ];
 
   for (const { pattern, code } of currencyPatterns) {
@@ -171,11 +171,6 @@ export function detectCurrency(text: string): string {
     }
   }
 
-  // For Arabic text, default to EGP instead of EUR
-  const hasArabicText = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text);
-  if (hasArabicText) {
-    return 'EGP';
-  }
-
-  return 'EUR'; // Default for non-Arabic text
+  // Always default to EGP when no currency is detected
+  return 'EGP';
 }

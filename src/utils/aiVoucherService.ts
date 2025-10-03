@@ -83,35 +83,30 @@ UNIVERSAL RECEIPT ANALYSIS - Handle all types of receipts:
 Look for TOTAL indicators in multiple languages:
 - Arabic: "مجموع" (total), "الإجمالي" (total), "المبلغ" (amount), "الرصيد المستحق" (balance due)
 - English: "Total", "Amount", "Sum", "Balance", "Due"
-- Currency formats: SAR, USD ($), EGP, EUR, SR, etc.
 
 VISUAL ANALYSIS STEPS:
 1. Scan the ENTIRE receipt for the final total amount
 2. Look for amounts in the BOTTOM section of the receipt
 3. Check for table structures with totals at the bottom
 4. Find the LARGEST monetary amount that represents the final total
-5. Look for patterns like:
-   - "13,500.00 SAR"
-   - "121.90 $"
-   - "الرصيد المستحق: XXXX"
-   - "Total: XXXX"
+
+CURRENCY DETECTION RULES (STRICT):
+- ONLY detect currency if you see explicit codes or symbols: SAR, SR, USD, $, EUR, €, EGP, ج.م, LE
+- Do NOT infer currency from language or context
+- If NO explicit currency code/symbol is visible, always use "EGP"
+- Do NOT use "SAR" unless you clearly see "SAR", "SR", or "ر.س" in the image
 
 IGNORE:
 - Individual item prices
 - Tax registration numbers
 - Phone numbers
 - Dates
-
-For Arabic invoices specifically:
-- Look for "الرصيد المستحق" (balance due)
-- Find amounts with SAR currency
-- Check the bottom rows of tables
-- Numbers in format "XX,XXX.XX SAR"
+- Arabic currency words like "ريال" or "درهم" (use EGP instead)
 
 Return ONLY this JSON:
 {
   "amount": <the total amount as a number>,
-  "currency": "<detected currency - USD, EGP, SAR, etc>",
+  "currency": "<EGP unless explicit currency code found>",
   "confidence": 0.95,
   "aiReasoning": "Found total amount [X] [currency] in [location/context]"
 }`;
